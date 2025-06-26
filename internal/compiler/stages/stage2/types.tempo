@@ -1,0 +1,424 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ===========================================================================
+// TEMPO COMPILER STAGE 2 - TYPE SYSTEM
+// ===========================================================================
+// Sistema de tipos completo con inference, generics, traits y WCET
+// ===========================================================================
+
+// Type kinds
+enum TypeKind {
+    // Primitives
+    Void,
+    Never,
+    Bool,
+    I8, I16, I32, I64, I128,
+    U8, U16, U32, U64, U128,
+    F32, F64,
+    Char,
+    
+    // Compound types
+    String,
+    Array(Box<Type>, Option<usize>),  // Type and optional size
+    Slice(Box<Type>),
+    Tuple(Vec<Type>),
+    Struct(StructType),
+    Enum(EnumType),
+    Union(UnionType),
+    
+    // Function types
+    Function(FunctionType),
+    Closure(ClosureType),
+    
+    // Advanced types
+    Pointer(Box<Type>, Mutability),
+    Reference(Box<Type>, Mutability, Lifetime),
+    
+    // Special types
+    Generic(String, Vec<TraitBound>),
+    Associated(Box<Type>, String),
+    
+    // Physical units
+    Time(TimeUnit),
+    Memory(MemoryUnit),
+    Frequency(FrequencyUnit),
+    
+    // Linear types
+    Linear(Box<Type>),
+    
+    // State types
+    State(StateType),
+    
+    // Type variables (for inference)
+    TypeVar(u32),
+    
+    // Error type
+    Error,
+}
+
+type Type = {
+    kind: TypeKind,
+    wcet: Option<TimeBound>,
+    size: Option<usize>,
+    align: Option<usize>,
+}
+
+type StructType = {
+    name: String,
+    fields: Vec<Field>,
+    generics: Vec<GenericParam>,
+    is_packed: bool,
+}
+
+type Field = {
+    name: String,
+    type: Type,
+    offset: usize,
+    visibility: Visibility,
+}
+
+type EnumType = {
+    name: String,
+    variants: Vec<Variant>,
+    generics: Vec<GenericParam>,
+    discriminant_type: Type,
+}
+
+type Variant = {
+    name: String,
+    fields: VariantFields,
+    discriminant: Option<i64>,
+}
+
+enum VariantFields {
+    Unit,
+    Tuple(Vec<Type>),
+    Struct(Vec<Field>),
+}
+
+type UnionType = {
+    name: String,
+    fields: Vec<Field>,
+    generics: Vec<GenericParam>,
+}
+
+type FunctionType = {
+    params: Vec<Type>,
+    return_type: Box<Type>,
+    is_varargs: bool,
+    calling_convention: CallingConvention,
+    wcet: Option<TimeBound>,
+}
+
+type ClosureType = {
+    params: Vec<Type>,
+    return_type: Box<Type>,
+    captures: Vec<Capture>,
+    wcet: Option<TimeBound>,
+}
+
+type Capture = {
+    name: String,
+    type: Type,
+    capture_mode: CaptureMode,
+}
+
+enum CaptureMode {
+    ByValue,
+    ByRef,
+    ByMutRef,
+}
+
+type GenericParam = {
+    name: String,
+    bounds: Vec<TraitBound>,
+    default: Option<Type>,
+}
+
+type TraitBound = {
+    trait_name: String,
+    generic_args: Vec<Type>,
+}
+
+enum Mutability {
+    Mutable,
+    Immutable,
+}
+
+type Lifetime = {
+    name: String,
+    bounds: Vec<String>,
+}
+
+enum Visibility {
+    Public,
+    Private,
+    Protected,
+    Internal,
+}
+
+enum CallingConvention {
+    Tempo,      // Default
+    C,          // For FFI
+    Interrupt,  // For interrupt handlers
+    Naked,      // No prologue/epilogue
+}
+
+// Time bounds for WCET analysis
+enum TimeBound {
+    Constant(u64, TimeUnit),
+    Linear(String),           // O(n)
+    Logarithmic(String),      // O(log n)
+    Quadratic(String),        // O(n²)
+    Polynomial(String, u32),  // O(n^k)
+    Exponential(String),      // O(2^n)
+    Unknown,
+}
+
+enum TimeUnit {
+    Cycles,
+    Nanoseconds,
+    Microseconds,
+    Milliseconds,
+    Seconds,
+}
+
+enum MemoryUnit {
+    Bytes,
+    Kilobytes,
+    Megabytes,
+    Gigabytes,
+}
+
+enum FrequencyUnit {
+    Hz,
+    KHz,
+    MHz,
+    GHz,
+}
+
+// State machine types
+type StateType = {
+    name: String,
+    states: Vec<State>,
+    transitions: Vec<Transition>,
+    current: String,
+}
+
+type State = {
+    name: String,
+    invariants: Vec<Expression>,
+}
+
+type Transition = {
+    from: String,
+    to: String,
+    condition: Expression,
+    action: Option<Statement>,
+}
+
+// Type inference
+type TypeEnv = {
+    bindings: Map<String, Type>,
+    constraints: Vec<Constraint>,
+    type_vars: u32,
+}
+
+enum Constraint {
+    Equal(Type, Type),
+    Subtype(Type, Type),
+    HasField(Type, String, Type),
+    HasMethod(Type, String, FunctionType),
+    Implements(Type, String),
+}
+
+// Type checking functions
+function new_type_env() -> TypeEnv {
+    TypeEnv{
+        bindings: Map::new(),
+        constraints: Vec::new(),
+        type_vars: 0,
+    }
+}
+
+function fresh_type_var(env: &mut TypeEnv) -> Type {
+    let var = env.type_vars;
+    env.type_vars += 1;
+    Type{
+        kind: TypeKind::TypeVar(var),
+        wcet: None,
+        size: None,
+        align: None,
+    }
+}
+
+function unify(env: &mut TypeEnv, t1: Type, t2: Type) -> Result<Type, String> {
+    match (t1.kind, t2.kind) {
+        (TypeKind::TypeVar(v1), TypeKind::TypeVar(v2)) if v1 == v2 => Ok(t1),
+        (TypeKind::TypeVar(v), _) => {
+            substitute(env, v, t2);
+            Ok(t2)
+        }
+        (_, TypeKind::TypeVar(v)) => {
+            substitute(env, v, t1);
+            Ok(t1)
+        }
+        (TypeKind::I32, TypeKind::I32) => Ok(t1),
+        (TypeKind::Function(f1), TypeKind::Function(f2)) => {
+            unify_function_types(env, f1, f2)
+        }
+        (TypeKind::Array(elem1, size1), TypeKind::Array(elem2, size2)) => {
+            let elem = unify(env, *elem1, *elem2)?;
+            if size1 != size2 {
+                Err("Array sizes don't match")
+            } else {
+                Ok(Type{
+                    kind: TypeKind::Array(Box::new(elem), size1),
+                    wcet: None,
+                    size: None,
+                    align: None,
+                })
+            }
+        }
+        _ => Err(format!("Cannot unify {:?} with {:?}", t1, t2))
+    }
+}
+
+function unify_function_types(
+    env: &mut TypeEnv, 
+    f1: FunctionType, 
+    f2: FunctionType
+) -> Result<Type, String> {
+    if f1.params.len() != f2.params.len() {
+        return Err("Function parameter count mismatch");
+    }
+    
+    let mut unified_params = Vec::new();
+    for (p1, p2) in f1.params.iter().zip(f2.params.iter()) {
+        unified_params.push(unify(env, p1.clone(), p2.clone())?);
+    }
+    
+    let unified_return = unify(env, *f1.return_type, *f2.return_type)?;
+    
+    Ok(Type{
+        kind: TypeKind::Function(FunctionType{
+            params: unified_params,
+            return_type: Box::new(unified_return),
+            is_varargs: f1.is_varargs && f2.is_varargs,
+            calling_convention: f1.calling_convention,
+            wcet: merge_wcet(f1.wcet, f2.wcet),
+        }),
+        wcet: None,
+        size: Some(8), // Function pointer size
+        align: Some(8),
+    })
+}
+
+function substitute(env: &mut TypeEnv, var: u32, type: Type) {
+    // Substitute type variable with concrete type
+    for constraint in &mut env.constraints {
+        match constraint {
+            Constraint::Equal(t1, t2) => {
+                substitute_in_type(t1, var, &type);
+                substitute_in_type(t2, var, &type);
+            }
+            // ... other constraints
+        }
+    }
+}
+
+function substitute_in_type(t: &mut Type, var: u32, replacement: &Type) {
+    match &mut t.kind {
+        TypeKind::TypeVar(v) if *v == var => {
+            *t = replacement.clone();
+        }
+        TypeKind::Array(elem, _) => {
+            substitute_in_type(elem, var, replacement);
+        }
+        TypeKind::Function(f) => {
+            for param in &mut f.params {
+                substitute_in_type(param, var, replacement);
+            }
+            substitute_in_type(&mut f.return_type, var, replacement);
+        }
+        // ... handle other type kinds
+        _ => {}
+    }
+}
+
+// WCET analysis
+function analyze_wcet(expr: &Expression, env: &TypeEnv) -> TimeBound {
+    match expr {
+        Expression::Literal(_) => TimeBound::Constant(1, TimeUnit::Cycles),
+        Expression::Variable(_) => TimeBound::Constant(1, TimeUnit::Cycles),
+        Expression::Binary(op, left, right) => {
+            let left_wcet = analyze_wcet(left, env);
+            let right_wcet = analyze_wcet(right, env);
+            combine_wcet(left_wcet, right_wcet, op)
+        }
+        Expression::Call(func, args) => {
+            // Look up function WCET
+            match lookup_function_wcet(func, env) {
+                Some(wcet) => wcet,
+                None => TimeBound::Unknown,
+            }
+        }
+        Expression::Loop(condition, body) => {
+            let condition_wcet = analyze_wcet(condition, env);
+            let body_wcet = analyze_wcet(body, env);
+            // Need loop bound analysis
+            TimeBound::Unknown
+        }
+        // ... other expressions
+    }
+}
+
+function combine_wcet(t1: TimeBound, t2: TimeBound, op: &str) -> TimeBound {
+    match (t1, t2) {
+        (TimeBound::Constant(c1, u1), TimeBound::Constant(c2, u2)) => {
+            // Convert to common unit and add
+            let cycles = convert_to_cycles(c1, u1) + convert_to_cycles(c2, u2);
+            TimeBound::Constant(cycles, TimeUnit::Cycles)
+        }
+        (TimeBound::Linear(n), TimeBound::Constant(_, _)) => TimeBound::Linear(n),
+        (TimeBound::Constant(_, _), TimeBound::Linear(n)) => TimeBound::Linear(n),
+        _ => TimeBound::Unknown,
+    }
+}
+
+function merge_wcet(t1: Option<TimeBound>, t2: Option<TimeBound>) -> Option<TimeBound> {
+    match (t1, t2) {
+        (Some(b1), Some(b2)) => Some(max_wcet(b1, b2)),
+        (Some(b), None) | (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+// Built-in types
+function builtin_types() -> Vec<(String, Type)> {
+    vec![
+        ("void", Type{ kind: TypeKind::Void, wcet: None, size: Some(0), align: Some(1) }),
+        ("bool", Type{ kind: TypeKind::Bool, wcet: None, size: Some(1), align: Some(1) }),
+        ("i8", Type{ kind: TypeKind::I8, wcet: None, size: Some(1), align: Some(1) }),
+        ("i16", Type{ kind: TypeKind::I16, wcet: None, size: Some(2), align: Some(2) }),
+        ("i32", Type{ kind: TypeKind::I32, wcet: None, size: Some(4), align: Some(4) }),
+        ("i64", Type{ kind: TypeKind::I64, wcet: None, size: Some(8), align: Some(8) }),
+        ("u8", Type{ kind: TypeKind::U8, wcet: None, size: Some(1), align: Some(1) }),
+        ("u16", Type{ kind: TypeKind::U16, wcet: None, size: Some(2), align: Some(2) }),
+        ("u32", Type{ kind: TypeKind::U32, wcet: None, size: Some(4), align: Some(4) }),
+        ("u64", Type{ kind: TypeKind::U64, wcet: None, size: Some(8), align: Some(8) }),
+        ("f32", Type{ kind: TypeKind::F32, wcet: None, size: Some(4), align: Some(4) }),
+        ("f64", Type{ kind: TypeKind::F64, wcet: None, size: Some(8), align: Some(8) }),
+        ("char", Type{ kind: TypeKind::Char, wcet: None, size: Some(4), align: Some(4) }),
+        ("string", Type{ kind: TypeKind::String, wcet: None, size: Some(16), align: Some(8) }),
+    ]
+}

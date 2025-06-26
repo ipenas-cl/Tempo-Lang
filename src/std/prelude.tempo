@@ -1,0 +1,478 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Tempo Prelude - All built-in types and functions
+// This file is automatically included by the compiler in every Tempo program
+// No imports needed - everything is available globally
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ============================================================================
+// Core Types
+// ============================================================================
+
+// Primitive types are built into the language:
+// bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, string, rune
+
+// ============================================================================
+// Memory Management
+// ============================================================================
+
+// Zero-allocation slice type
+struct slice<T> {
+    ptr: *T
+    len: u64
+    cap: u64
+}
+
+// Dynamic vector with pre-allocated backing
+struct Vec<T> {
+    data: slice<T>
+    len: u64
+}
+
+// Option type for nullable values
+enum Option<T> {
+    Some(T),
+    None
+}
+
+// Result type for error handling
+enum Result<T, E> {
+    Ok(T),
+    Err(E)
+}
+
+// ============================================================================
+// String Operations
+// ============================================================================
+
+// String builder for efficient string concatenation
+struct StringBuilder {
+    buf: [1024]u8
+    len: u32
+}
+
+// Built-in string functions
+func strlen(s: string) -> u64
+func strcmp(a: string, b: string) -> i32
+func strcpy(dst: *u8, src: string) -> *u8
+func strcat(dst: *u8, src: string) -> *u8
+func substr(s: string, start: u64, end: u64) -> string
+func string_from_bytes(bytes: &[u8]) -> string
+func string_to_bytes(s: string) -> &[u8]
+func string_split(s: string, delimiter: string) -> Vec<string>
+func string_trim(s: string) -> string
+func string_contains(s: string, substr: string) -> bool
+func string_index_of(s: string, substr: string) -> i32
+func string_replace(s: string, old: string, new: string) -> string
+func string_to_uppercase(s: string) -> string
+func string_to_lowercase(s: string) -> string
+
+// ============================================================================
+// Formatting and Printing
+// ============================================================================
+
+// Print functions
+func print(args: ...any)
+func println(args: ...any)
+func eprint(args: ...any)
+func eprintln(args: ...any)
+func format(fmt: string, args: ...any) -> string
+func sprintf(buf: *u8, fmt: string, args: ...any) -> i32
+
+// Number parsing
+func parse_i32(s: string) -> Result<i32, string>
+func parse_i64(s: string) -> Result<i64, string>
+func parse_u32(s: string) -> Result<u32, string>
+func parse_u64(s: string) -> Result<u64, string>
+func parse_f32(s: string) -> Result<f32, string>
+func parse_f64(s: string) -> Result<f64, string>
+
+// Number to string conversion
+func i32_to_string(n: i32) -> string
+func i64_to_string(n: i64) -> string
+func u32_to_string(n: u32) -> string
+func u64_to_string(n: u64) -> string
+func f32_to_string(n: f32) -> string
+func f64_to_string(n: f64) -> string
+
+// ============================================================================
+// Time Functions
+// ============================================================================
+
+struct Time {
+    sec: i64   // Seconds since Unix epoch
+    nsec: i32  // Nanoseconds
+}
+
+struct Duration {
+    nsec: i64  // Total nanoseconds
+}
+
+func now() -> Time
+func time_since(start: Time) -> Duration
+func time_add(t: Time, d: Duration) -> Time
+func time_sub(t: Time, d: Duration) -> Time
+func time_unix(sec: i64, nsec: i64) -> Time
+func sleep(d: Duration)
+func duration_seconds(sec: i64) -> Duration
+func duration_milliseconds(ms: i64) -> Duration
+func duration_microseconds(us: i64) -> Duration
+func duration_nanoseconds(ns: i64) -> Duration
+
+// ============================================================================
+// Synchronization Primitives
+// ============================================================================
+
+struct Mutex {
+    state: atomic<u32>
+}
+
+struct RWMutex {
+    state: atomic<u32>
+    reader_count: atomic<u32>
+}
+
+struct WaitGroup {
+    counter: atomic<u32>
+}
+
+struct Once {
+    done: atomic<bool>
+}
+
+// Atomic operations
+struct atomic<T> {
+    value: T
+}
+
+func atomic_load<T>(a: &atomic<T>) -> T
+func atomic_store<T>(a: &atomic<T>, val: T)
+func atomic_add<T>(a: &atomic<T>, delta: T) -> T
+func atomic_sub<T>(a: &atomic<T>, delta: T) -> T
+func atomic_swap<T>(a: &atomic<T>, new: T) -> T
+func atomic_compare_and_swap<T>(a: &atomic<T>, old: T, new: T) -> bool
+
+// Mutex operations
+func (m: &Mutex) lock()
+func (m: &Mutex) unlock()
+func (m: &Mutex) try_lock() -> bool
+
+// RWMutex operations
+func (m: &RWMutex) lock()
+func (m: &RWMutex) unlock()
+func (m: &RWMutex) read_lock()
+func (m: &RWMutex) read_unlock()
+
+// WaitGroup operations
+func (wg: &WaitGroup) add(delta: i32)
+func (wg: &WaitGroup) done()
+func (wg: &WaitGroup) wait()
+
+// Once operations
+func (o: &Once) do(f: func())
+
+// ============================================================================
+// Network Operations
+// ============================================================================
+
+struct TCPAddr {
+    ip: [4]u8     // IPv4 address
+    port: u16
+}
+
+struct TCPListener {
+    fd: i32
+    addr: TCPAddr
+}
+
+struct TCPConn {
+    fd: i32
+    local_addr: TCPAddr
+    remote_addr: TCPAddr
+}
+
+// TCP functions
+func listen_tcp(addr: string) -> Result<TCPListener, string>
+func dial_tcp(addr: string) -> Result<TCPConn, string>
+func (l: &TCPListener) accept() -> Result<TCPConn, string>
+func (l: &TCPListener) close() -> Result<(), string>
+func (c: &TCPConn) read(buf: &mut [u8]) -> Result<u64, string>
+func (c: &TCPConn) write(buf: &[u8]) -> Result<u64, string>
+func (c: &TCPConn) write_all(buf: &[u8]) -> Result<(), string>
+func (c: &TCPConn) close() -> Result<(), string>
+func (c: &TCPConn) set_deadline(t: Time) -> Result<(), string>
+func (c: &TCPConn) set_read_deadline(t: Time) -> Result<(), string>
+func (c: &TCPConn) set_write_deadline(t: Time) -> Result<(), string>
+
+// ============================================================================
+// Hashing Functions
+// ============================================================================
+
+// FNV-1a hash for general use
+func hash_fnv1a(data: &[u8]) -> u64
+func hash_fnv1a_string(s: string) -> u64
+
+// xxHash for high performance
+func hash_xxh64(data: &[u8], seed: u64) -> u64
+func hash_xxh64_string(s: string, seed: u64) -> u64
+
+// CRC32 for checksums
+func hash_crc32(data: &[u8]) -> u32
+
+// SipHash for hash tables (DoS resistant)
+func hash_siphash(data: &[u8], key: [16]u8) -> u64
+
+// ============================================================================
+// Random Number Generation
+// ============================================================================
+
+struct Random {
+    state: [4]u64  // xoshiro256** state
+}
+
+// Global RNG instance
+let global_rng: Random = Random::new(0)
+
+func (r: &Random) new(seed: u64) -> Random
+func (r: &Random) next_u32() -> u32
+func (r: &Random) next_u64() -> u64
+func (r: &Random) next_f32() -> f32
+func (r: &Random) next_f64() -> f64
+func (r: &Random) next_bool() -> bool
+func (r: &Random) next_range(min: i64, max: i64) -> i64
+
+// Global random functions using global_rng
+func rand_u32() -> u32
+func rand_u64() -> u64
+func rand_f32() -> f32
+func rand_f64() -> f64
+func rand_bool() -> bool
+func rand_range(min: i64, max: i64) -> i64
+
+// ============================================================================
+// Byte Operations
+// ============================================================================
+
+func bytes_equal(a: &[u8], b: &[u8]) -> bool
+func bytes_compare(a: &[u8], b: &[u8]) -> i32
+func bytes_copy(dst: &mut [u8], src: &[u8]) -> u64
+func bytes_index_of(haystack: &[u8], needle: &[u8]) -> i32
+func bytes_contains(haystack: &[u8], needle: &[u8]) -> bool
+
+// ============================================================================
+// Math Functions
+// ============================================================================
+
+// Basic math
+func abs(x: f64) -> f64
+func min<T>(a: T, b: T) -> T
+func max<T>(a: T, b: T) -> T
+func clamp<T>(x: T, min: T, max: T) -> T
+
+// Trigonometry
+func sin(x: f64) -> f64
+func cos(x: f64) -> f64
+func tan(x: f64) -> f64
+func asin(x: f64) -> f64
+func acos(x: f64) -> f64
+func atan(x: f64) -> f64
+func atan2(y: f64, x: f64) -> f64
+
+// Exponential and logarithm
+func exp(x: f64) -> f64
+func log(x: f64) -> f64
+func log10(x: f64) -> f64
+func log2(x: f64) -> f64
+func pow(x: f64, y: f64) -> f64
+func sqrt(x: f64) -> f64
+
+// Rounding
+func ceil(x: f64) -> f64
+func floor(x: f64) -> f64
+func round(x: f64) -> f64
+func trunc(x: f64) -> f64
+
+// Constants
+const PI: f64 = 3.14159265358979323846
+const E: f64 = 2.71828182845904523536
+const SQRT2: f64 = 1.41421356237309504880
+
+// ============================================================================
+// Goroutines and Channels
+// ============================================================================
+
+// Launch a goroutine
+func go(f: func())
+
+// Channel operations
+struct Channel<T> {
+    capacity: u64
+}
+
+func make_channel<T>(capacity: u64) -> Channel<T>
+func (ch: &Channel<T>) send(value: T)
+func (ch: &Channel<T>) recv() -> T
+func (ch: &Channel<T>) try_recv() -> Option<T>
+func (ch: &Channel<T>) close()
+
+// Select statement support
+func select(cases: ...SelectCase) -> i32
+
+struct SelectCase {
+    channel: *void
+    value: *void
+    kind: SelectKind
+}
+
+enum SelectKind {
+    Send,
+    Recv,
+    Default
+}
+
+// ============================================================================
+// Error Handling
+// ============================================================================
+
+// Panic and recover
+func panic(msg: string) -> !
+func recover() -> Option<string>
+
+// Assert for debugging
+func assert(condition: bool, msg: string)
+func debug_assert(condition: bool, msg: string)
+
+// ============================================================================
+// Memory Operations
+// ============================================================================
+
+// Low-level memory operations
+func memcpy(dst: *void, src: *void, n: u64) -> *void
+func memmove(dst: *void, src: *void, n: u64) -> *void
+func memset(dst: *void, c: i32, n: u64) -> *void
+func memcmp(a: *void, b: *void, n: u64) -> i32
+
+// Allocation (for advanced use cases)
+func alloc<T>(count: u64) -> *T
+func free<T>(ptr: *T)
+func realloc<T>(ptr: *T, new_count: u64) -> *T
+
+// ============================================================================
+// Type Traits and Reflection
+// ============================================================================
+
+// Type information
+func type_name<T>() -> string
+func type_size<T>() -> u64
+func type_align<T>() -> u64
+
+// ============================================================================
+// Compiler Intrinsics
+// ============================================================================
+
+// Hints to the compiler
+func likely(cond: bool) -> bool
+func unlikely(cond: bool) -> bool
+func unreachable() -> !
+func black_box<T>(x: T) -> T
+
+// SIMD operations (when available)
+func prefetch<T>(ptr: *T, rw: i32, locality: i32)
+func fence(order: MemoryOrder)
+
+enum MemoryOrder {
+    Relaxed,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst
+}
+
+// ============================================================================
+// Collections
+// ============================================================================
+
+// HashMap with linear probing
+struct HashMap<K, V> {
+    buckets: Vec<Option<(K, V)>>
+    len: u64
+}
+
+func (m: &HashMap<K, V>) new() -> HashMap<K, V>
+func (m: &HashMap<K, V>) insert(key: K, value: V) -> Option<V>
+func (m: &HashMap<K, V>) get(key: &K) -> Option<&V>
+func (m: &HashMap<K, V>) remove(key: &K) -> Option<V>
+func (m: &HashMap<K, V>) contains(key: &K) -> bool
+func (m: &HashMap<K, V>) len() -> u64
+func (m: &HashMap<K, V>) clear()
+
+// HashSet
+struct HashSet<T> {
+    map: HashMap<T, ()>
+}
+
+func (s: &HashSet<T>) new() -> HashSet<T>
+func (s: &HashSet<T>) insert(value: T) -> bool
+func (s: &HashSet<T>) remove(value: &T) -> bool
+func (s: &HashSet<T>) contains(value: &T) -> bool
+func (s: &HashSet<T>) len() -> u64
+func (s: &HashSet<T>) clear()
+
+// ============================================================================
+// Iterator Protocol
+// ============================================================================
+
+trait Iterator<Item> {
+    func next(&mut self) -> Option<Item>
+}
+
+// Common iterator operations
+func (it: &mut impl Iterator<T>) collect<T>() -> Vec<T>
+func (it: &mut impl Iterator<T>) count<T>() -> u64
+func (it: &mut impl Iterator<T>) sum<T>() -> T where T: Add
+func (it: &mut impl Iterator<T>) product<T>() -> T where T: Mul
+func (it: &mut impl Iterator<T>) find<T>(predicate: func(&T) -> bool) -> Option<T>
+func (it: &mut impl Iterator<T>) all<T>(predicate: func(&T) -> bool) -> bool
+func (it: &mut impl Iterator<T>) any<T>(predicate: func(&T) -> bool) -> bool
+
+// ============================================================================
+// File I/O (for completeness, though Redis Killer doesn't use it)
+// ============================================================================
+
+struct File {
+    fd: i32
+    path: string
+}
+
+func open(path: string, flags: OpenFlags) -> Result<File, string>
+func create(path: string) -> Result<File, string>
+func (f: &File) read(buf: &mut [u8]) -> Result<u64, string>
+func (f: &File) write(buf: &[u8]) -> Result<u64, string>
+func (f: &File) seek(offset: i64, whence: SeekWhence) -> Result<i64, string>
+func (f: &File) close() -> Result<(), string>
+
+enum OpenFlags {
+    ReadOnly,
+    WriteOnly,
+    ReadWrite,
+    Append,
+    Create,
+    Truncate
+}
+
+enum SeekWhence {
+    Start,
+    Current,
+    End
+}

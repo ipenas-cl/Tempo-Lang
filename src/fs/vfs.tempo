@@ -1,0 +1,984 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Virtual File System (VFS) layer for AtomicOS
+// Provides a uniform interface for different filesystem types
+// All operations maintain bounded execution time
+
+module fs.vfs;
+
+import core.types;
+import core.memory;
+import core.string;
+import fs.atomicfs;
+
+// VFS limits
+const MAX_MOUNT_POINTS: u32 = 16;
+const MAX_PATH_LENGTH: u32 = 255;
+const MAX_OPEN_FILES: u32 = 1024;
+const MAX_FILESYSTEMS: u32 = 8;
+
+// File types (matching POSIX)
+const DT_UNKNOWN: u8 = 0;
+const DT_FIFO: u8 = 1;
+const DT_CHR: u8 = 2;
+const DT_DIR: u8 = 4;
+const DT_BLK: u8 = 6;
+const DT_REG: u8 = 8;
+const DT_LNK: u8 = 10;
+const DT_SOCK: u8 = 12;
+
+// Open flags
+const O_RDONLY: u32 = 0x0000;
+const O_WRONLY: u32 = 0x0001;
+const O_RDWR: u32 = 0x0002;
+const O_CREAT: u32 = 0x0040;
+const O_EXCL: u32 = 0x0080;
+const O_NOCTTY: u32 = 0x0100;
+const O_TRUNC: u32 = 0x0200;
+const O_APPEND: u32 = 0x0400;
+const O_NONBLOCK: u32 = 0x0800;
+const O_SYNC: u32 = 0x1000;
+const O_DIRECT: u32 = 0x4000;
+const O_DIRECTORY: u32 = 0x10000;
+const O_NOFOLLOW: u32 = 0x20000;
+const O_CLOEXEC: u32 = 0x80000;
+
+// Seek whence values
+const SEEK_SET: i32 = 0;
+const SEEK_CUR: i32 = 1;
+const SEEK_END: i32 = 2;
+
+// Stat structure
+struct Stat {
+    dev: u64,       // Device ID
+    ino: u64,       // Inode number
+    mode: u32,      // File mode
+    nlink: u32,     // Number of hard links
+    uid: u32,       // User ID
+    gid: u32,       // Group ID
+    rdev: u64,      // Device ID (if special file)
+    size: i64,      // Total size in bytes
+    blksize: i64,   // Block size for I/O
+    blocks: i64,    // Number of 512B blocks allocated
+    atime: i64,     // Access time
+    mtime: i64,     // Modification time
+    ctime: i64,     // Status change time
+}
+
+// Directory entry
+struct Dirent {
+    ino: u64,           // Inode number
+    off: i64,           // Offset to next dirent
+    reclen: u16,        // Length of this record
+    type: u8,           // File type
+    name: [u8; 256],    // Null-terminated filename
+}
+
+// Filesystem operations table
+struct FileSystemOps {
+    name: [u8; 32],
+    
+    // Mount operations
+    mount: fn(*FileSystem, *BlockDevice, *const u8) -> Result<void>,
+    unmount: fn(*FileSystem) -> Result<void>,
+    sync: fn(*FileSystem) -> Result<void>,
+    statfs: fn(*FileSystem, *StatFS) -> Result<void>,
+    
+    // Inode operations
+    lookup: fn(*FileSystem, *Inode, *const u8, **Inode) -> Result<void>,
+    create: fn(*FileSystem, *Inode, *const u8, u32, **Inode) -> Result<void>,
+    mkdir: fn(*FileSystem, *Inode, *const u8, u32) -> Result<void>,
+    rmdir: fn(*FileSystem, *Inode, *const u8) -> Result<void>,
+    unlink: fn(*FileSystem, *Inode, *const u8) -> Result<void>,
+    rename: fn(*FileSystem, *Inode, *const u8, *Inode, *const u8) -> Result<void>,
+    link: fn(*FileSystem, *Inode, *Inode, *const u8) -> Result<void>,
+    symlink: fn(*FileSystem, *Inode, *const u8, *const u8) -> Result<void>,
+    
+    // File operations
+    open: fn(*FileSystem, *Inode, *File, u32) -> Result<void>,
+    close: fn(*FileSystem, *File) -> Result<void>,
+    read: fn(*FileSystem, *File, *u8, u64, *u64) -> Result<void>,
+    write: fn(*FileSystem, *File, *const u8, u64, *u64) -> Result<void>,
+    seek: fn(*FileSystem, *File, i64, i32, *i64) -> Result<void>,
+    ioctl: fn(*FileSystem, *File, u32, *void) -> Result<void>,
+    
+    // Inode metadata
+    getattr: fn(*FileSystem, *Inode, *Stat) -> Result<void>,
+    setattr: fn(*FileSystem, *Inode, *Stat, u32) -> Result<void>,
+    
+    // Directory operations
+    readdir: fn(*FileSystem, *File, *Dirent, u64) -> Result<void>,
+}
+
+// Filesystem type
+struct FileSystemType {
+    name: [u8; 32],
+    ops: *FileSystemOps,
+    next: *FileSystemType,
+}
+
+// Mounted filesystem
+struct FileSystem {
+    type: *FileSystemType,
+    ops: *FileSystemOps,
+    device: *BlockDevice,
+    root: *Inode,
+    mount_point: *Dentry,
+    flags: u32,
+    private_data: *void,
+    mount_count: u32,
+}
+
+// VFS inode
+struct Inode {
+    ino: u64,           // Inode number
+    mode: u32,          // File mode
+    uid: u32,           // User ID
+    gid: u32,           // Group ID
+    size: u64,          // File size
+    atime: i64,         // Access time
+    mtime: i64,         // Modification time  
+    ctime: i64,         // Change time
+    nlink: u32,         // Link count
+    blocks: u64,        // Number of blocks
+    fs: *FileSystem,    // Filesystem this inode belongs to
+    private_data: *void,// Filesystem-specific data
+    ref_count: u32,     // Reference count
+    lock: RwLock,       // Read-write lock
+}
+
+// Directory entry cache
+struct Dentry {
+    name: [u8; MAX_NAME_LENGTH + 1],
+    inode: *Inode,
+    parent: *Dentry,
+    children: *Dentry,
+    next: *Dentry,
+    prev: *Dentry,
+    ref_count: u32,
+    flags: u32,
+}
+
+// Open file
+struct File {
+    inode: *Inode,
+    dentry: *Dentry,
+    mode: u32,          // Open mode
+    flags: u32,         // Open flags
+    pos: i64,           // Current position
+    ref_count: u32,     // Reference count
+    private_data: *void,// Filesystem-specific data
+}
+
+// Mount point
+struct MountPoint {
+    path: [u8; MAX_PATH_LENGTH + 1],
+    fs: *FileSystem,
+    dentry: *Dentry,
+    flags: u32,
+}
+
+// Filesystem statistics
+struct StatFS {
+    type: u64,          // Filesystem type
+    bsize: u64,         // Optimal transfer block size
+    blocks: u64,        // Total data blocks
+    bfree: u64,         // Free blocks
+    bavail: u64,        // Free blocks for unprivileged users
+    files: u64,         // Total file nodes
+    ffree: u64,         // Free file nodes
+    fsid: u64,          // Filesystem ID
+    namelen: u64,       // Maximum filename length
+    frsize: u64,        // Fragment size
+}
+
+// Global VFS state
+struct VFS {
+    // Registered filesystem types
+    fs_types: *FileSystemType,
+    fs_type_count: u32,
+    
+    // Mount table
+    mounts: [MountPoint; MAX_MOUNT_POINTS],
+    mount_count: u32,
+    
+    // Root filesystem
+    root_fs: *FileSystem,
+    root_dentry: *Dentry,
+    
+    // Open file table
+    files: [File; MAX_OPEN_FILES],
+    file_bitmap: [u64; (MAX_OPEN_FILES + 63) / 64],
+    
+    // Locks
+    mount_lock: RwLock,
+    file_lock: SpinLock,
+}
+
+// Global VFS instance
+let g_vfs: VFS;
+
+// Initialize VFS
+fn init() -> Result<void> {
+    // Clear VFS structure
+    memory.zero(&g_vfs, sizeof(VFS));
+    
+    // Initialize locks
+    g_vfs.mount_lock.init();
+    g_vfs.file_lock.init();
+    
+    // Register built-in filesystems
+    register_atomicfs()?;
+    
+    return Ok(void);
+}
+
+// Register a filesystem type
+fn register_filesystem(fs_type: *FileSystemType) -> Result<void> {
+    if g_vfs.fs_type_count >= MAX_FILESYSTEMS {
+        return Err(Error.TooManyFilesystems);
+    }
+    
+    // Check if already registered
+    let current = g_vfs.fs_types;
+    while current != null {
+        if string.compare(current.name, fs_type.name) == 0 {
+            return Err(Error.AlreadyRegistered);
+        }
+        current = current.next;
+    }
+    
+    // Add to list
+    fs_type.next = g_vfs.fs_types;
+    g_vfs.fs_types = fs_type;
+    g_vfs.fs_type_count += 1;
+    
+    return Ok(void);
+}
+
+// Mount a filesystem
+fn mount(fs_type_name: *const u8, device: *BlockDevice, 
+         mount_path: *const u8, flags: u32) -> Result<void> {
+    
+    g_vfs.mount_lock.write_lock();
+    defer g_vfs.mount_lock.write_unlock();
+    
+    // Find filesystem type
+    let fs_type = find_filesystem_type(fs_type_name)?;
+    
+    // Check mount point availability
+    if g_vfs.mount_count >= MAX_MOUNT_POINTS {
+        return Err(Error.TooManyMounts);
+    }
+    
+    // Verify mount path doesn't conflict
+    for i in 0..g_vfs.mount_count {
+        if string.compare(g_vfs.mounts[i].path, mount_path) == 0 {
+            return Err(Error.AlreadyMounted);
+        }
+    }
+    
+    // Allocate filesystem structure
+    let fs = allocate<FileSystem>();
+    if fs == null {
+        return Err(Error.NoMemory);
+    }
+    
+    // Initialize filesystem
+    fs.type = fs_type;
+    fs.ops = fs_type.ops;
+    fs.device = device;
+    fs.flags = flags;
+    fs.mount_count = 0;
+    
+    // Call filesystem-specific mount
+    fs.ops.mount(fs, device, mount_path)?;
+    
+    // Create mount point
+    let mount_idx = g_vfs.mount_count;
+    string.copy(g_vfs.mounts[mount_idx].path, mount_path);
+    g_vfs.mounts[mount_idx].fs = fs;
+    g_vfs.mounts[mount_idx].flags = flags;
+    
+    // Special case for root filesystem
+    if string.compare(mount_path, "/") == 0 {
+        g_vfs.root_fs = fs;
+        g_vfs.root_dentry = create_root_dentry(fs);
+        g_vfs.mounts[mount_idx].dentry = g_vfs.root_dentry;
+    } else {
+        // Create dentry for mount point
+        let dentry = lookup_path(mount_path)?;
+        g_vfs.mounts[mount_idx].dentry = dentry;
+    }
+    
+    g_vfs.mount_count += 1;
+    
+    return Ok(void);
+}
+
+// Unmount a filesystem
+fn unmount(mount_path: *const u8) -> Result<void> {
+    g_vfs.mount_lock.write_lock();
+    defer g_vfs.mount_lock.write_unlock();
+    
+    // Find mount point
+    let mount_idx = find_mount_point(mount_path)?;
+    let mount = &g_vfs.mounts[mount_idx];
+    let fs = mount.fs;
+    
+    // Check if filesystem is busy
+    if fs.mount_count > 0 {
+        return Err(Error.FilesystemBusy);
+    }
+    
+    // Call filesystem-specific unmount
+    fs.ops.unmount(fs)?;
+    
+    // Remove from mount table
+    for i in mount_idx..(g_vfs.mount_count - 1) {
+        g_vfs.mounts[i] = g_vfs.mounts[i + 1];
+    }
+    g_vfs.mount_count -= 1;
+    
+    // Free filesystem structure
+    free(fs);
+    
+    return Ok(void);
+}
+
+// Open a file
+fn open(path: *const u8, flags: u32, mode: u32) -> Result<i32> {
+    // Lookup the file
+    let dentry = lookup_path(path)?;
+    let inode = dentry.inode;
+    
+    // Check permissions
+    if !check_permissions(inode, flags) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Allocate file descriptor
+    g_vfs.file_lock.lock();
+    let fd = allocate_fd()?;
+    let file = &g_vfs.files[fd];
+    
+    // Initialize file structure
+    file.inode = inode;
+    file.dentry = dentry;
+    file.mode = mode;
+    file.flags = flags;
+    file.pos = 0;
+    file.ref_count = 1;
+    
+    // Call filesystem-specific open
+    let fs = inode.fs;
+    fs.ops.open(fs, inode, file, flags)?;
+    
+    // Increment reference counts
+    atomic_inc(&inode.ref_count);
+    atomic_inc(&dentry.ref_count);
+    
+    g_vfs.file_lock.unlock();
+    
+    return Ok(fd as i32);
+}
+
+// Close a file
+fn close(fd: i32) -> Result<void> {
+    if fd < 0 || fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    g_vfs.file_lock.lock();
+    
+    let file = &g_vfs.files[fd];
+    if file.ref_count == 0 {
+        g_vfs.file_lock.unlock();
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Decrement reference count
+    file.ref_count -= 1;
+    if file.ref_count > 0 {
+        g_vfs.file_lock.unlock();
+        return Ok(void);
+    }
+    
+    // Last reference - actually close the file
+    let inode = file.inode;
+    let dentry = file.dentry;
+    let fs = inode.fs;
+    
+    // Call filesystem-specific close
+    fs.ops.close(fs, file)?;
+    
+    // Decrement inode and dentry references
+    atomic_dec(&inode.ref_count);
+    atomic_dec(&dentry.ref_count);
+    
+    // Free file descriptor
+    free_fd(fd);
+    
+    g_vfs.file_lock.unlock();
+    
+    return Ok(void);
+}
+
+// Read from a file
+fn read(fd: i32, buffer: *u8, count: u64) -> Result<i64> {
+    if fd < 0 || fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let file = &g_vfs.files[fd];
+    if file.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Check read permission
+    if file.flags & O_WRONLY {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Call filesystem-specific read
+    let fs = file.inode.fs;
+    let mut bytes_read: u64 = 0;
+    fs.ops.read(fs, file, buffer, count, &bytes_read)?;
+    
+    // Update file position
+    file.pos += bytes_read as i64;
+    
+    return Ok(bytes_read as i64);
+}
+
+// Write to a file
+fn write(fd: i32, buffer: *const u8, count: u64) -> Result<i64> {
+    if fd < 0 || fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let file = &g_vfs.files[fd];
+    if file.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Check write permission
+    if !(file.flags & O_WRONLY || file.flags & O_RDWR) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Handle append mode
+    if file.flags & O_APPEND {
+        file.pos = file.inode.size as i64;
+    }
+    
+    // Call filesystem-specific write
+    let fs = file.inode.fs;
+    let mut bytes_written: u64 = 0;
+    fs.ops.write(fs, file, buffer, count, &bytes_written)?;
+    
+    // Update file position
+    file.pos += bytes_written as i64;
+    
+    return Ok(bytes_written as i64);
+}
+
+// Seek in a file
+fn lseek(fd: i32, offset: i64, whence: i32) -> Result<i64> {
+    if fd < 0 || fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let file = &g_vfs.files[fd];
+    if file.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Call filesystem-specific seek
+    let fs = file.inode.fs;
+    let mut new_pos: i64 = 0;
+    fs.ops.seek(fs, file, offset, whence, &new_pos)?;
+    
+    file.pos = new_pos;
+    
+    return Ok(new_pos);
+}
+
+// Get file status
+fn stat(path: *const u8, stat_buf: *Stat) -> Result<void> {
+    // Lookup the file
+    let dentry = lookup_path(path)?;
+    let inode = dentry.inode;
+    
+    // Call filesystem-specific getattr
+    let fs = inode.fs;
+    fs.ops.getattr(fs, inode, stat_buf)?;
+    
+    return Ok(void);
+}
+
+// Get file status by file descriptor
+fn fstat(fd: i32, stat_buf: *Stat) -> Result<void> {
+    if fd < 0 || fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let file = &g_vfs.files[fd];
+    if file.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Call filesystem-specific getattr
+    let fs = file.inode.fs;
+    fs.ops.getattr(fs, file.inode, stat_buf)?;
+    
+    return Ok(void);
+}
+
+// Create directory
+fn mkdir(path: *const u8, mode: u32) -> Result<void> {
+    // Parse path
+    let (parent_path, name) = split_path(path)?;
+    
+    // Lookup parent directory
+    let parent_dentry = lookup_path(parent_path)?;
+    let parent_inode = parent_dentry.inode;
+    
+    // Check if parent is a directory
+    if !S_ISDIR(parent_inode.mode) {
+        return Err(Error.NotADirectory);
+    }
+    
+    // Check write permission on parent
+    if !check_write_permission(parent_inode) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Call filesystem-specific mkdir
+    let fs = parent_inode.fs;
+    fs.ops.mkdir(fs, parent_inode, name, mode)?;
+    
+    return Ok(void);
+}
+
+// Remove directory
+fn rmdir(path: *const u8) -> Result<void> {
+    // Parse path
+    let (parent_path, name) = split_path(path)?;
+    
+    // Lookup parent directory
+    let parent_dentry = lookup_path(parent_path)?;
+    let parent_inode = parent_dentry.inode;
+    
+    // Check write permission on parent
+    if !check_write_permission(parent_inode) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Call filesystem-specific rmdir
+    let fs = parent_inode.fs;
+    fs.ops.rmdir(fs, parent_inode, name)?;
+    
+    return Ok(void);
+}
+
+// Unlink file
+fn unlink(path: *const u8) -> Result<void> {
+    // Parse path
+    let (parent_path, name) = split_path(path)?;
+    
+    // Lookup parent directory
+    let parent_dentry = lookup_path(parent_path)?;
+    let parent_inode = parent_dentry.inode;
+    
+    // Check write permission on parent
+    if !check_write_permission(parent_inode) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Call filesystem-specific unlink
+    let fs = parent_inode.fs;
+    fs.ops.unlink(fs, parent_inode, name)?;
+    
+    return Ok(void);
+}
+
+// Helper functions
+
+// Find filesystem type by name
+fn find_filesystem_type(name: *const u8) -> Result<*FileSystemType> {
+    let current = g_vfs.fs_types;
+    
+    while current != null {
+        if string.compare(current.name, name) == 0 {
+            return Ok(current);
+        }
+        current = current.next;
+    }
+    
+    return Err(Error.UnknownFilesystem);
+}
+
+// Find mount point by path
+fn find_mount_point(path: *const u8) -> Result<u32> {
+    for i in 0..g_vfs.mount_count {
+        if string.compare(g_vfs.mounts[i].path, path) == 0 {
+            return Ok(i);
+        }
+    }
+    
+    return Err(Error.NotMounted);
+}
+
+// Lookup path and return dentry
+fn lookup_path(path: *const u8) -> Result<*Dentry> {
+    if path[0] != '/' {
+        return Err(Error.InvalidPath);
+    }
+    
+    // Start from root
+    let mut current_dentry = g_vfs.root_dentry;
+    let mut path_ptr = path + 1;
+    
+    while *path_ptr != 0 {
+        // Extract next component
+        let component: [u8; MAX_NAME_LENGTH + 1];
+        let len = extract_path_component(path_ptr, &component)?;
+        path_ptr += len;
+        
+        // Skip trailing slashes
+        while *path_ptr == '/' {
+            path_ptr += 1;
+        }
+        
+        // Lookup component in current directory
+        let child_dentry = lookup_component(current_dentry, &component)?;
+        current_dentry = child_dentry;
+        
+        // Check for mount point
+        current_dentry = follow_mount(current_dentry);
+    }
+    
+    return Ok(current_dentry);
+}
+
+// Lookup single path component
+fn lookup_component(parent: *Dentry, name: *const u8) -> Result<*Dentry> {
+    // First check dentry cache
+    let cached = find_cached_dentry(parent, name);
+    if cached != null {
+        return Ok(cached);
+    }
+    
+    // Not in cache - do filesystem lookup
+    let parent_inode = parent.inode;
+    let fs = parent_inode.fs;
+    
+    let child_inode: *Inode;
+    fs.ops.lookup(fs, parent_inode, name, &child_inode)?;
+    
+    // Create new dentry
+    let dentry = allocate_dentry(name, child_inode, parent)?;
+    
+    return Ok(dentry);
+}
+
+// Follow mount points
+fn follow_mount(dentry: *Dentry) -> *Dentry {
+    // Check if this dentry is a mount point
+    for i in 0..g_vfs.mount_count {
+        if g_vfs.mounts[i].dentry == dentry && i > 0 {
+            // Return root of mounted filesystem
+            return g_vfs.mounts[i].fs.root;
+        }
+    }
+    
+    return dentry;
+}
+
+// Allocate file descriptor
+fn allocate_fd() -> Result<u32> {
+    for i in 0..MAX_OPEN_FILES {
+        let word_idx = i / 64;
+        let bit_idx = i % 64;
+        
+        if (g_vfs.file_bitmap[word_idx] & (1 << bit_idx)) == 0 {
+            g_vfs.file_bitmap[word_idx] |= (1 << bit_idx);
+            return Ok(i);
+        }
+    }
+    
+    return Err(Error.TooManyOpenFiles);
+}
+
+// Free file descriptor
+fn free_fd(fd: i32) {
+    let word_idx = fd / 64;
+    let bit_idx = fd % 64;
+    g_vfs.file_bitmap[word_idx] &= ~(1 << bit_idx);
+}
+
+// Permission checking
+fn check_permissions(inode: *Inode, flags: u32) -> bool {
+    // Simplified permission check
+    if flags & O_RDONLY || flags & O_RDWR {
+        if !check_read_permission(inode) {
+            return false;
+        }
+    }
+    
+    if flags & O_WRONLY || flags & O_RDWR {
+        if !check_write_permission(inode) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+fn check_read_permission(inode: *Inode) -> bool {
+    // Check if current user can read
+    let uid = get_current_uid();
+    let gid = get_current_gid();
+    
+    if uid == 0 {
+        return true; // Root can read anything
+    }
+    
+    if uid == inode.uid && (inode.mode & S_IRUSR) {
+        return true;
+    }
+    
+    if gid == inode.gid && (inode.mode & S_IRGRP) {
+        return true;
+    }
+    
+    if inode.mode & S_IROTH {
+        return true;
+    }
+    
+    return false;
+}
+
+fn check_write_permission(inode: *Inode) -> bool {
+    // Check if current user can write
+    let uid = get_current_uid();
+    let gid = get_current_gid();
+    
+    if uid == 0 {
+        return true; // Root can write anything
+    }
+    
+    if uid == inode.uid && (inode.mode & S_IWUSR) {
+        return true;
+    }
+    
+    if gid == inode.gid && (inode.mode & S_IWGRP) {
+        return true;
+    }
+    
+    if inode.mode & S_IWOTH {
+        return true;
+    }
+    
+    return false;
+}
+
+// Path manipulation
+fn split_path(path: *const u8) -> Result<(*const u8, *const u8)> {
+    let len = string.length(path);
+    if len == 0 {
+        return Err(Error.InvalidPath);
+    }
+    
+    // Find last slash
+    let mut last_slash = -1;
+    for i in 0..len {
+        if path[i] == '/' {
+            last_slash = i;
+        }
+    }
+    
+    if last_slash < 0 {
+        return Err(Error.InvalidPath);
+    }
+    
+    // Allocate buffers for parent and name
+    let parent = allocate_array<u8>(last_slash + 2);
+    let name = allocate_array<u8>(len - last_slash);
+    
+    // Copy parent path
+    memory.copy(parent, path, last_slash + 1);
+    parent[last_slash + 1] = 0;
+    
+    // Copy name
+    memory.copy(name, path + last_slash + 1, len - last_slash - 1);
+    name[len - last_slash - 1] = 0;
+    
+    return Ok((parent, name));
+}
+
+fn extract_path_component(path: *const u8, component: *u8) -> Result<u32> {
+    let mut i: u32 = 0;
+    
+    while path[i] != 0 && path[i] != '/' && i < MAX_NAME_LENGTH {
+        component[i] = path[i];
+        i += 1;
+    }
+    
+    if i == 0 {
+        return Err(Error.InvalidPath);
+    }
+    
+    if i >= MAX_NAME_LENGTH {
+        return Err(Error.NameTooLong);
+    }
+    
+    component[i] = 0;
+    
+    return Ok(i);
+}
+
+// Dentry cache management
+fn create_root_dentry(fs: *FileSystem) -> *Dentry {
+    let dentry = allocate<Dentry>();
+    
+    string.copy(dentry.name, "/");
+    dentry.inode = fs.root;
+    dentry.parent = null;
+    dentry.children = null;
+    dentry.next = null;
+    dentry.prev = null;
+    dentry.ref_count = 1;
+    dentry.flags = 0;
+    
+    return dentry;
+}
+
+fn allocate_dentry(name: *const u8, inode: *Inode, parent: *Dentry) -> Result<*Dentry> {
+    let dentry = allocate<Dentry>();
+    if dentry == null {
+        return Err(Error.NoMemory);
+    }
+    
+    string.copy(dentry.name, name);
+    dentry.inode = inode;
+    dentry.parent = parent;
+    dentry.children = null;
+    dentry.ref_count = 1;
+    dentry.flags = 0;
+    
+    // Add to parent's children list
+    if parent != null {
+        dentry.next = parent.children;
+        if parent.children != null {
+            parent.children.prev = dentry;
+        }
+        parent.children = dentry;
+    }
+    
+    return Ok(dentry);
+}
+
+fn find_cached_dentry(parent: *Dentry, name: *const u8) -> *Dentry {
+    let child = parent.children;
+    
+    while child != null {
+        if string.compare(child.name, name) == 0 {
+            atomic_inc(&child.ref_count);
+            return child;
+        }
+        child = child.next;
+    }
+    
+    return null;
+}
+
+// Register AtomicFS
+fn register_atomicfs() -> Result<void> {
+    let atomicfs_type = allocate<FileSystemType>();
+    let atomicfs_ops = allocate<FileSystemOps>();
+    
+    string.copy(atomicfs_type.name, "atomicfs");
+    atomicfs_type.ops = atomicfs_ops;
+    
+    // Initialize operations table
+    atomicfs_ops.mount = atomicfs_mount;
+    atomicfs_ops.unmount = atomicfs_unmount;
+    atomicfs_ops.sync = atomicfs_sync;
+    atomicfs_ops.lookup = atomicfs_lookup;
+    atomicfs_ops.create = atomicfs_create;
+    atomicfs_ops.mkdir = atomicfs_mkdir;
+    atomicfs_ops.rmdir = atomicfs_rmdir;
+    atomicfs_ops.unlink = atomicfs_unlink;
+    atomicfs_ops.open = atomicfs_open;
+    atomicfs_ops.close = atomicfs_close;
+    atomicfs_ops.read = atomicfs_read;
+    atomicfs_ops.write = atomicfs_write;
+    atomicfs_ops.seek = atomicfs_seek;
+    atomicfs_ops.getattr = atomicfs_getattr;
+    atomicfs_ops.readdir = atomicfs_readdir;
+    
+    return register_filesystem(atomicfs_type);
+}
+
+// Mode checking macros
+fn S_ISREG(mode: u32) -> bool { return (mode & S_IFMT) == S_IFREG; }
+fn S_ISDIR(mode: u32) -> bool { return (mode & S_IFMT) == S_IFDIR; }
+fn S_ISCHR(mode: u32) -> bool { return (mode & S_IFMT) == S_IFCHR; }
+fn S_ISBLK(mode: u32) -> bool { return (mode & S_IFMT) == S_IFBLK; }
+fn S_ISFIFO(mode: u32) -> bool { return (mode & S_IFMT) == S_IFIFO; }
+fn S_ISLNK(mode: u32) -> bool { return (mode & S_IFMT) == S_IFLNK; }
+fn S_ISSOCK(mode: u32) -> bool { return (mode & S_IFMT) == S_IFSOCK; }
+
+// File mode bits
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFCHR: u32 = 0o020000;
+const S_IFBLK: u32 = 0o060000;
+const S_IFIFO: u32 = 0o010000;
+const S_IFSOCK: u32 = 0o140000;
+const S_IFLNK: u32 = 0o120000;
+
+const S_IRUSR: u32 = 0o400;
+const S_IWUSR: u32 = 0o200;
+const S_IXUSR: u32 = 0o100;
+const S_IRGRP: u32 = 0o040;
+const S_IWGRP: u32 = 0o020;
+const S_IXGRP: u32 = 0o010;
+const S_IROTH: u32 = 0o004;
+const S_IWOTH: u32 = 0o002;
+const S_IXOTH: u32 = 0o001;
+
+// Error types
+enum Error {
+    TooManyFilesystems,
+    AlreadyRegistered,
+    UnknownFilesystem,
+    TooManyMounts,
+    AlreadyMounted,
+    NotMounted,
+    FilesystemBusy,
+    NoMemory,
+    InvalidPath,
+    InvalidFileDescriptor,
+    TooManyOpenFiles,
+    PermissionDenied,
+    NotADirectory,
+    IsADirectory,
+    FileNotFound,
+    NameTooLong,
+    NoSpace,
+    ReadOnly,
+    InvalidArgument,
+}

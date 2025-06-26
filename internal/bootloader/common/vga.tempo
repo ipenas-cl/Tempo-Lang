@@ -1,0 +1,254 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// VGA text mode output module
+
+const VGA_MEMORY: u64 = 0xB8000;
+const VGA_WIDTH: u32 = 80;
+const VGA_HEIGHT: u32 = 25;
+
+// VGA colors
+const VGA_COLOR_BLACK: u8 = 0;
+const VGA_COLOR_BLUE: u8 = 1;
+const VGA_COLOR_GREEN: u8 = 2;
+const VGA_COLOR_CYAN: u8 = 3;
+const VGA_COLOR_RED: u8 = 4;
+const VGA_COLOR_MAGENTA: u8 = 5;
+const VGA_COLOR_BROWN: u8 = 6;
+const VGA_COLOR_LIGHT_GREY: u8 = 7;
+const VGA_COLOR_DARK_GREY: u8 = 8;
+const VGA_COLOR_LIGHT_BLUE: u8 = 9;
+const VGA_COLOR_LIGHT_GREEN: u8 = 10;
+const VGA_COLOR_LIGHT_CYAN: u8 = 11;
+const VGA_COLOR_LIGHT_RED: u8 = 12;
+const VGA_COLOR_LIGHT_MAGENTA: u8 = 13;
+const VGA_COLOR_LIGHT_BROWN: u8 = 14;
+const VGA_COLOR_WHITE: u8 = 15;
+
+// Current cursor position
+var vga_row: u32 = 0;
+var vga_column: u32 = 0;
+var vga_color: u8 = VGA_COLOR_LIGHT_GREY | (VGA_COLOR_BLACK << 4);
+
+// Make VGA attribute byte from foreground and background colors
+fn vga_entry_color(fg: u8, bg: u8) -> u8 {
+    return fg | (bg << 4);
+}
+
+// Make VGA entry from character and color attribute
+fn vga_entry(ch: u8, color: u8) -> u16 {
+    return (ch as u16) | ((color as u16) << 8);
+}
+
+// Initialize VGA
+fn vga_init() {
+    vga_row = 0;
+    vga_column = 0;
+    vga_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    vga_clear();
+}
+
+// Clear the screen
+fn vga_clear() {
+    let buffer = VGA_MEMORY as *u16;
+    let blank = vga_entry(b' ', vga_color);
+    
+    for y in 0..VGA_HEIGHT {
+        for x in 0..VGA_WIDTH {
+            let index = y * VGA_WIDTH + x;
+            buffer[index] = blank;
+        }
+    }
+    
+    vga_row = 0;
+    vga_column = 0;
+    update_cursor();
+}
+
+// Put character at position
+fn vga_putchar_at(ch: u8, color: u8, x: u32, y: u32) {
+    let buffer = VGA_MEMORY as *u16;
+    let index = y * VGA_WIDTH + x;
+    buffer[index] = vga_entry(ch, color);
+}
+
+// Handle newline and scrolling
+fn vga_newline() {
+    vga_column = 0;
+    if vga_row < VGA_HEIGHT - 1 {
+        vga_row += 1;
+    } else {
+        vga_scroll();
+    }
+}
+
+// Scroll the screen up by one line
+fn vga_scroll() {
+    let buffer = VGA_MEMORY as *u16;
+    
+    // Move all lines up by one
+    for y in 0..(VGA_HEIGHT - 1) {
+        for x in 0..VGA_WIDTH {
+            let src_index = (y + 1) * VGA_WIDTH + x;
+            let dst_index = y * VGA_WIDTH + x;
+            buffer[dst_index] = buffer[src_index];
+        }
+    }
+    
+    // Clear the last line
+    let blank = vga_entry(b' ', vga_color);
+    for x in 0..VGA_WIDTH {
+        let index = (VGA_HEIGHT - 1) * VGA_WIDTH + x;
+        buffer[index] = blank;
+    }
+}
+
+// Write a character to the screen
+fn vga_putchar(ch: u8) {
+    if ch == b'\n' {
+        vga_newline();
+    } else if ch == b'\r' {
+        vga_column = 0;
+    } else if ch == b'\t' {
+        // Tab to next 4-character boundary
+        vga_column = (vga_column + 4) & ~3;
+        if vga_column >= VGA_WIDTH {
+            vga_newline();
+        }
+    } else {
+        vga_putchar_at(ch, vga_color, vga_column, vga_row);
+        vga_column += 1;
+        if vga_column >= VGA_WIDTH {
+            vga_newline();
+        }
+    }
+    update_cursor();
+}
+
+// Print a string
+fn vga_print(s: *u8) {
+    let mut i = 0;
+    while s[i] != 0 {
+        vga_putchar(s[i]);
+        i += 1;
+    }
+}
+
+// Print formatted string (simplified printf)
+fn vga_printf(fmt: *u8, args: ...) {
+    let mut i = 0;
+    let mut arg_index = 0;
+    
+    while fmt[i] != 0 {
+        if fmt[i] == b'%' && fmt[i + 1] != 0 {
+            i += 1;
+            match fmt[i] {
+                b'd' => {
+                    // Print decimal number
+                    let num = args[arg_index] as i32;
+                    print_decimal(num);
+                    arg_index += 1;
+                }
+                b'x' => {
+                    // Print hexadecimal number
+                    let num = args[arg_index] as u32;
+                    print_hex(num);
+                    arg_index += 1;
+                }
+                b's' => {
+                    // Print string
+                    let str = args[arg_index] as *u8;
+                    vga_print(str);
+                    arg_index += 1;
+                }
+                b'%' => {
+                    vga_putchar(b'%');
+                }
+                _ => {
+                    vga_putchar(b'%');
+                    vga_putchar(fmt[i]);
+                }
+            }
+        } else {
+            vga_putchar(fmt[i]);
+        }
+        i += 1;
+    }
+}
+
+// Print decimal number
+fn print_decimal(mut num: i32) {
+    if num < 0 {
+        vga_putchar(b'-');
+        num = -num;
+    }
+    
+    if num == 0 {
+        vga_putchar(b'0');
+        return;
+    }
+    
+    let mut digits: [10]u8;
+    let mut i = 0;
+    
+    while num > 0 {
+        digits[i] = b'0' + (num % 10) as u8;
+        num /= 10;
+        i += 1;
+    }
+    
+    while i > 0 {
+        i -= 1;
+        vga_putchar(digits[i]);
+    }
+}
+
+// Print hexadecimal number
+fn print_hex(mut num: u32) {
+    vga_print("0x");
+    
+    if num == 0 {
+        vga_putchar(b'0');
+        return;
+    }
+    
+    let mut digits: [8]u8;
+    let mut i = 0;
+    
+    while num > 0 {
+        let digit = num & 0xF;
+        if digit < 10 {
+            digits[i] = b'0' + digit as u8;
+        } else {
+            digits[i] = b'A' + (digit - 10) as u8;
+        }
+        num >>= 4;
+        i += 1;
+    }
+    
+    while i > 0 {
+        i -= 1;
+        vga_putchar(digits[i]);
+    }
+}
+
+// Update hardware cursor position
+fn update_cursor() {
+    let pos = vga_row * VGA_WIDTH + vga_column;
+    
+    // Cursor LOW port to VGA INDEX register
+    outb(0x3D4, 0x0F);
+    outb(0x3D5, (pos & 0xFF) as u8);
+    
+    // Cursor HIGH port to VGA INDEX register
+    outb(0x3D4, 0x0E);
+    outb(0x3D5, ((pos >> 8) & 0xFF) as u8);
+}

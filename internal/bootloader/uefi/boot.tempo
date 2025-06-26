@@ -1,0 +1,357 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS UEFI Bootloader
+// This provides UEFI boot support with Graphics Output Protocol
+
+import "uefi.tempo"
+import "../common/multiboot.tempo"
+import "../common/memory.tempo"
+import "../common/elf.tempo"
+
+// UEFI application entry point
+@[no_mangle]
+@[calling_convention("ms_abi")]
+fn efi_main(image_handle: EFI_HANDLE, system_table: *EFI_SYSTEM_TABLE) -> EFI_STATUS {
+    // Save system table
+    ST = system_table;
+    BS = ST.BootServices;
+    RT = ST.RuntimeServices;
+    
+    // Initialize console
+    ST.ConOut.ClearScreen(ST.ConOut);
+    print(L"AtomicOS UEFI Bootloader\r\n");
+    
+    // Get memory map
+    let mut memory_map = get_memory_map();
+    if memory_map == null {
+        print(L"Failed to get memory map\r\n");
+        return EFI_OUT_OF_RESOURCES;
+    }
+    
+    // Initialize graphics
+    let gop = init_graphics();
+    if gop == null {
+        print(L"Failed to initialize graphics\r\n");
+        return EFI_UNSUPPORTED;
+    }
+    
+    // Load kernel
+    let kernel_entry = load_kernel_uefi();
+    if kernel_entry == 0 {
+        print(L"Failed to load kernel\r\n");
+        return EFI_NOT_FOUND;
+    }
+    
+    print(L"Kernel loaded successfully\r\n");
+    
+    // Prepare for kernel handoff
+    let mb_info = prepare_multiboot_uefi(memory_map, gop);
+    
+    // Exit boot services
+    let map_key = get_memory_map_key();
+    let status = BS.ExitBootServices(image_handle, map_key);
+    if status != EFI_SUCCESS {
+        print(L"Failed to exit boot services\r\n");
+        return status;
+    }
+    
+    // Set up paging for kernel
+    setup_kernel_paging();
+    
+    // Jump to kernel with multiboot info
+    jump_to_kernel_uefi(kernel_entry, mb_info);
+    
+    // Should never reach here
+    return EFI_SUCCESS;
+}
+
+// Get UEFI memory map
+fn get_memory_map() -> *MemoryMap {
+    let mut map_size: usize = 0;
+    let mut map: *EFI_MEMORY_DESCRIPTOR = null;
+    let mut map_key: usize = 0;
+    let mut desc_size: usize = 0;
+    let mut desc_version: u32 = 0;
+    
+    // Get required size
+    BS.GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_version);
+    
+    // Allocate buffer (add some extra space)
+    map_size += 2 * desc_size;
+    let status = BS.AllocatePool(EfiLoaderData, map_size, &map as **void);
+    if status != EFI_SUCCESS {
+        return null;
+    }
+    
+    // Get actual memory map
+    status = BS.GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_version);
+    if status != EFI_SUCCESS {
+        BS.FreePool(map as *void);
+        return null;
+    }
+    
+    // Convert to our format
+    let result = allocate_pool(sizeof(MemoryMap)) as *MemoryMap;
+    result.entries = map;
+    result.map_size = map_size;
+    result.desc_size = desc_size;
+    result.map_key = map_key;
+    
+    return result;
+}
+
+// Initialize Graphics Output Protocol
+fn init_graphics() -> *EFI_GRAPHICS_OUTPUT_PROTOCOL {
+    let mut gop: *EFI_GRAPHICS_OUTPUT_PROTOCOL;
+    let guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    
+    let status = BS.LocateProtocol(&guid, null, &gop as **void);
+    if status != EFI_SUCCESS {
+        return null;
+    }
+    
+    // Set preferred mode (1024x768 or higher)
+    let mut best_mode = 0;
+    let mut best_width = 0;
+    let mut best_height = 0;
+    
+    for i in 0..gop.Mode.MaxMode {
+        let mut info: *EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+        let mut info_size: usize;
+        
+        if gop.QueryMode(gop, i, &info_size, &info) == EFI_SUCCESS {
+            if info.HorizontalResolution >= 1024 && 
+               info.VerticalResolution >= 768 &&
+               info.PixelFormat == PixelBlueGreenRedReserved8BitPerColor {
+                if info.HorizontalResolution * info.VerticalResolution > 
+                   best_width * best_height {
+                    best_mode = i;
+                    best_width = info.HorizontalResolution;
+                    best_height = info.VerticalResolution;
+                }
+            }
+        }
+    }
+    
+    if best_width > 0 {
+        gop.SetMode(gop, best_mode);
+    }
+    
+    return gop;
+}
+
+// Load kernel from file system
+fn load_kernel_uefi() -> u64 {
+    // Open root directory
+    let mut root: *EFI_FILE_PROTOCOL;
+    let mut fs: *EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+    let fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    
+    let status = BS.LocateProtocol(&fs_guid, null, &fs as **void);
+    if status != EFI_SUCCESS {
+        print(L"Failed to locate file system\r\n");
+        return 0;
+    }
+    
+    status = fs.OpenVolume(fs, &root);
+    if status != EFI_SUCCESS {
+        print(L"Failed to open volume\r\n");
+        return 0;
+    }
+    
+    // Open kernel file
+    let mut kernel_file: *EFI_FILE_PROTOCOL;
+    status = root.Open(root, &kernel_file, L"\\EFI\\BOOT\\kernel.elf", 
+                       EFI_FILE_MODE_READ, 0);
+    if status != EFI_SUCCESS {
+        print(L"Failed to open kernel.elf\r\n");
+        return 0;
+    }
+    
+    // Get file size
+    let mut file_info: [1024]u8;
+    let mut info_size: usize = sizeof(file_info);
+    status = kernel_file.GetInfo(kernel_file, &EFI_FILE_INFO_ID, 
+                                 &info_size, file_info.as_ptr() as *void);
+    if status != EFI_SUCCESS {
+        print(L"Failed to get kernel file info\r\n");
+        kernel_file.Close(kernel_file);
+        return 0;
+    }
+    
+    let file_size = (file_info.as_ptr() as *EFI_FILE_INFO).FileSize;
+    
+    // Allocate memory for kernel
+    let mut kernel_buffer: *void;
+    status = BS.AllocatePool(EfiLoaderData, file_size, &kernel_buffer);
+    if status != EFI_SUCCESS {
+        print(L"Failed to allocate kernel buffer\r\n");
+        kernel_file.Close(kernel_file);
+        return 0;
+    }
+    
+    // Read kernel
+    let mut read_size = file_size;
+    status = kernel_file.Read(kernel_file, &read_size, kernel_buffer);
+    if status != EFI_SUCCESS {
+        print(L"Failed to read kernel\r\n");
+        BS.FreePool(kernel_buffer);
+        kernel_file.Close(kernel_file);
+        return 0;
+    }
+    
+    kernel_file.Close(kernel_file);
+    
+    // Load ELF
+    return elf_load(kernel_buffer as *u8);
+}
+
+// Prepare multiboot information for UEFI
+fn prepare_multiboot_uefi(memory_map: *MemoryMap, gop: *EFI_GRAPHICS_OUTPUT_PROTOCOL) -> *MultibootInfo {
+    let mb_info = allocate_pool(sizeof(MultibootInfo)) as *MultibootInfo;
+    
+    // Set flags
+    mb_info.flags = MULTIBOOT_INFO_MEMORY | MULTIBOOT_INFO_MMAP | 
+                    MULTIBOOT_INFO_FRAMEBUFFER_INFO;
+    
+    // Set memory info (will be updated from memory map)
+    mb_info.mem_lower = 640;  // Conventional memory
+    mb_info.mem_upper = 0;    // Will calculate
+    
+    // Convert UEFI memory map to multiboot format
+    let mb_mmap = allocate_pool(memory_map.map_size * 2) as *MultibootMmapEntry;
+    let mut mb_count = 0;
+    let mut total_memory: u64 = 0;
+    
+    let desc = memory_map.entries;
+    for i in 0..(memory_map.map_size / memory_map.desc_size) {
+        let entry = (desc as usize + i * memory_map.desc_size) as *EFI_MEMORY_DESCRIPTOR;
+        
+        // Convert UEFI memory type to multiboot type
+        let mb_type = match entry.Type {
+            EfiLoaderCode | EfiLoaderData | EfiBootServicesCode | 
+            EfiBootServicesData | EfiConventionalMemory => MULTIBOOT_MEMORY_AVAILABLE,
+            EfiACPIReclaimMemory => MULTIBOOT_MEMORY_ACPI_RECLAIMABLE,
+            EfiACPIMemoryNVS => MULTIBOOT_MEMORY_NVS,
+            _ => MULTIBOOT_MEMORY_RESERVED,
+        };
+        
+        mb_mmap[mb_count].size = sizeof(MultibootMmapEntry) - 4;
+        mb_mmap[mb_count].addr = entry.PhysicalStart;
+        mb_mmap[mb_count].len = entry.NumberOfPages * PAGE_SIZE;
+        mb_mmap[mb_count].type = mb_type;
+        mb_count += 1;
+        
+        if mb_type == MULTIBOOT_MEMORY_AVAILABLE {
+            total_memory += entry.NumberOfPages * PAGE_SIZE;
+        }
+    }
+    
+    mb_info.mmap_addr = mb_mmap as u32;
+    mb_info.mmap_length = mb_count * sizeof(MultibootMmapEntry);
+    mb_info.mem_upper = (total_memory / 1024) - 1024;
+    
+    // Set framebuffer info from GOP
+    if gop != null {
+        mb_info.framebuffer_addr = gop.Mode.FrameBufferBase;
+        mb_info.framebuffer_pitch = gop.Mode.Info.PixelsPerScanLine * 4;
+        mb_info.framebuffer_width = gop.Mode.Info.HorizontalResolution;
+        mb_info.framebuffer_height = gop.Mode.Info.VerticalResolution;
+        mb_info.framebuffer_bpp = 32;
+        mb_info.framebuffer_type = 1;  // RGB
+    }
+    
+    return mb_info;
+}
+
+// Set up paging for kernel
+fn setup_kernel_paging() {
+    // Similar to BIOS version but using UEFI allocated memory
+    let pml4 = allocate_pages(1) as *u64;
+    let pdpt = allocate_pages(1) as *u64;
+    let pd = allocate_pages(1) as *u64;
+    
+    // Clear tables
+    for i in 0..512 {
+        pml4[i] = 0;
+        pdpt[i] = 0;
+        pd[i] = 0;
+    }
+    
+    // Set up identity mapping for first 1GB using 2MB pages
+    pml4[0] = (pdpt as u64) | 0x03;
+    pdpt[0] = (pd as u64) | 0x03;
+    
+    for i in 0..512 {
+        pd[i] = (i * 0x200000) | 0x83;  // 2MB pages, present, writable, large
+    }
+    
+    // Also map higher half
+    pml4[256] = (pdpt as u64) | 0x03;
+    
+    // Load page table
+    asm {
+        "mov cr3, %[pml4]"
+        : : [pml4] "r" (pml4)
+    }
+}
+
+// Jump to kernel
+fn jump_to_kernel_uefi(entry: u64, mb_info: *MultibootInfo) {
+    // Set multiboot magic in EAX and info pointer in EBX
+    asm {
+        "mov eax, 0x2BADB002"
+        "mov rbx, %[mb_info]"
+        "jmp %[entry]"
+        : : [mb_info] "r" (mb_info), [entry] "r" (entry)
+    }
+}
+
+// Helper functions
+fn print(s: *u16) {
+    ST.ConOut.OutputString(ST.ConOut, s);
+}
+
+fn allocate_pool(size: usize) -> *void {
+    let mut buffer: *void;
+    BS.AllocatePool(EfiLoaderData, size, &buffer);
+    return buffer;
+}
+
+fn allocate_pages(pages: usize) -> *void {
+    let mut buffer: EFI_PHYSICAL_ADDRESS;
+    BS.AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &buffer);
+    return buffer as *void;
+}
+
+fn get_memory_map_key() -> usize {
+    let mut map_size: usize = 0;
+    let mut map_key: usize = 0;
+    let mut desc_size: usize = 0;
+    let mut desc_version: u32 = 0;
+    
+    BS.GetMemoryMap(&map_size, null, &map_key, &desc_size, &desc_version);
+    return map_key;
+}
+
+// Global UEFI pointers
+var ST: *EFI_SYSTEM_TABLE;
+var BS: *EFI_BOOT_SERVICES;
+var RT: *EFI_RUNTIME_SERVICES;
+
+// Memory map structure
+struct MemoryMap {
+    entries: *EFI_MEMORY_DESCRIPTOR,
+    map_size: usize,
+    desc_size: usize,
+    map_key: usize,
+}

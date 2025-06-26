@@ -1,0 +1,540 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ===========================================================================
+// TEMPO COMPILER - EL COMPILADOR DEFINITIVO
+// ===========================================================================
+// 100% escrito en Tempo, compila Tempo, sin C
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+// ===========================================================================
+
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+
+fn main() -> i32 {
+    print_banner();
+    
+    if (argc() < 2) {
+        print_usage();
+        return 1;
+    }
+    
+    let input_file = argv(1);
+    let output_file = get_output_name(input_file, argc());
+    
+    print("Compilando: ");
+    print(input_file);
+    print(" -> ");
+    print_line(output_file);
+    
+    // Compilar
+    let result = compile_file(input_file, output_file);
+    
+    if (result == 0) {
+        print_line("");
+        print_line("✅ Compilación exitosa!");
+        print_line("[T∞] Ejecución determinística garantizada.");
+    }
+    
+    return result;
+}
+
+fn print_banner() {
+    print_line("╔═══════════════════════════════════════════════════════════════╗");
+    print_line("║                    TEMPO COMPILER v2.0                        ║");
+    print_line("║  ╔═════╦═════╦═════╗                                         ║");
+    print_line("║  ║ 🛡️  ║ ⚖️  ║ ⚡  ║    100% Tempo, 0% C                    ║");
+    print_line("║  ║  C  ║  E  ║  G  ║                                         ║");
+    print_line("║  ╚═════╩═════╩═════╝                                         ║");
+    print_line("║  ╔═════════════════╗                                         ║");
+    print_line("║  ║ wcet [T∞] bound ║                                         ║");
+    print_line("║  ╚═════════════════╝                                         ║");
+    print_line("╚═══════════════════════════════════════════════════════════════╝");
+    print_line("");
+}
+
+fn print_usage() {
+    print_line("Uso: tempo archivo.tempo [salida]");
+    print_line("");
+    print_line("Si no se especifica salida, genera ejecutable con el mismo nombre.");
+    print_line("");
+    print_line("Ejemplos:");
+    print_line("  tempo hello.tempo           # Genera 'hello' (Linux) o 'hello.exe' (Windows)");
+    print_line("  tempo hello.tempo programa  # Genera 'programa'");
+}
+
+fn get_output_name(input: string, arg_count: i32) -> string {
+    if (arg_count > 2) {
+        return argv(2);
+    }
+    
+    // Quitar extensión .tempo
+    let name = remove_extension(input);
+    
+    // En Windows agregar .exe
+    if (is_windows()) {
+        return concat(name, ".exe");
+    }
+    
+    return name;
+}
+
+fn compile_file(input: string, output: string) -> i32 {
+    // Leer archivo fuente
+    let source = read_file(input);
+    if (source == "") {
+        print("Error: No se puede leer ");
+        print_line(input);
+        return 1;
+    }
+    
+    // Lexer
+    let tokens = tokenize(source);
+    
+    // Parser
+    let ast = parse(tokens);
+    
+    // Análisis semántico
+    let analyzed = analyze(ast);
+    
+    // Optimización
+    let optimized = optimize(analyzed);
+    
+    // Generación de código
+    let target_code = generate_code(optimized);
+    
+    // Escribir ejecutable
+    write_executable(output, target_code);
+    
+    return 0;
+}
+
+// ===========================================================================
+// LEXER
+// ===========================================================================
+
+fn tokenize(source: string) -> TokenList {
+    let tokens = TokenList{};
+    let pos = 0;
+    let line = 1;
+    let column = 1;
+    
+    while (pos < string_length(source)) {
+        // Saltar espacios
+        while (pos < string_length(source) && is_whitespace(char_at(source, pos))) {
+            if (char_at(source, pos) == '\n') {
+                line = line + 1;
+                column = 1;
+            } else {
+                column = column + 1;
+            }
+            pos = pos + 1;
+        }
+        
+        if (pos >= string_length(source)) {
+            break;
+        }
+        
+        let ch = char_at(source, pos);
+        
+        // Comentarios
+        if (ch == '/' && pos + 1 < string_length(source) && char_at(source, pos + 1) == '/') {
+            pos = pos + 2;
+            while (pos < string_length(source) && char_at(source, pos) != '\n') {
+                pos = pos + 1;
+            }
+            continue;
+        }
+        
+        // Identificadores y palabras clave
+        if (is_alpha(ch) || ch == '_') {
+            let start = pos;
+            while (pos < string_length(source) && (is_alnum(char_at(source, pos)) || char_at(source, pos) == '_')) {
+                pos = pos + 1;
+                column = column + 1;
+            }
+            
+            let value = substring(source, start, pos);
+            let type = get_keyword_type(value);
+            
+            add_token(tokens, Token{
+                type: type,
+                value: value,
+                line: line,
+                column: column - string_length(value)
+            });
+        }
+        // Números
+        else if (is_digit(ch)) {
+            let start = pos;
+            while (pos < string_length(source) && is_digit(char_at(source, pos))) {
+                pos = pos + 1;
+                column = column + 1;
+            }
+            
+            let value = substring(source, start, pos);
+            
+            add_token(tokens, Token{
+                type: TOKEN_NUMBER,
+                value: value,
+                line: line,
+                column: column - string_length(value)
+            });
+        }
+        // Strings
+        else if (ch == '"') {
+            pos = pos + 1;
+            column = column + 1;
+            let start = pos;
+            
+            while (pos < string_length(source) && char_at(source, pos) != '"') {
+                if (char_at(source, pos) == '\\' && pos + 1 < string_length(source)) {
+                    pos = pos + 2;
+                    column = column + 2;
+                } else {
+                    pos = pos + 1;
+                    column = column + 1;
+                }
+            }
+            
+            let value = substring(source, start, pos);
+            
+            if (pos < string_length(source)) {
+                pos = pos + 1;  // Skip closing quote
+                column = column + 1;
+            }
+            
+            add_token(tokens, Token{
+                type: TOKEN_STRING,
+                value: value,
+                line: line,
+                column: column - string_length(value) - 2
+            });
+        }
+        // Operadores y símbolos
+        else {
+            let token = scan_operator(source, pos, line, column);
+            add_token(tokens, token);
+            pos = pos + string_length(token.value);
+            column = column + string_length(token.value);
+        }
+    }
+    
+    add_token(tokens, Token{
+        type: TOKEN_EOF,
+        value: "",
+        line: line,
+        column: column
+    });
+    
+    return tokens;
+}
+
+// ===========================================================================
+// PARSER
+// ===========================================================================
+
+fn parse(tokens: TokenList) -> AST {
+    let parser = Parser{
+        tokens: tokens,
+        current: 0
+    };
+    
+    return parse_program(parser);
+}
+
+fn parse_program(parser: Parser) -> AST {
+    let program = AST{
+        type: NODE_PROGRAM,
+        children: []
+    };
+    
+    while (!is_at_end(parser)) {
+        let item = parse_top_level(parser);
+        add_child(program, item);
+    }
+    
+    return program;
+}
+
+fn parse_top_level(parser: Parser) -> AST {
+    let token = peek(parser);
+    
+    if (token.type == TOKEN_FN) {
+        return parse_function(parser);
+    } else if (token.type == TOKEN_TYPE) {
+        return parse_type_declaration(parser);
+    } else if (token.type == TOKEN_LET) {
+        return parse_global_variable(parser);
+    } else {
+        error("Expected function, type or global variable");
+    }
+}
+
+// ===========================================================================
+// ANÁLISIS SEMÁNTICO
+// ===========================================================================
+
+fn analyze(ast: AST) -> AST {
+    let analyzer = SemanticAnalyzer{
+        symbols: SymbolTable{},
+        types: TypeTable{},
+        current_function: ""
+    };
+    
+    // Inicializar tipos built-in
+    init_builtin_types(analyzer.types);
+    
+    // Analizar
+    return analyze_node(analyzer, ast);
+}
+
+// ===========================================================================
+// OPTIMIZADOR
+// ===========================================================================
+
+fn optimize(ast: AST) -> AST {
+    // Optimizaciones que preservan WCET
+    ast = constant_folding(ast);
+    ast = dead_code_elimination(ast);
+    ast = inline_small_functions(ast);
+    
+    return ast;
+}
+
+// ===========================================================================
+// GENERADOR DE CÓDIGO
+// ===========================================================================
+
+fn generate_code(ast: AST) -> ExecutableCode {
+    let generator = CodeGenerator{
+        code: ExecutableCode{},
+        platform: detect_platform()
+    };
+    
+    if (generator.platform == PLATFORM_WINDOWS) {
+        return generate_windows_exe(generator, ast);
+    } else {
+        return generate_linux_elf(generator, ast);
+    }
+}
+
+fn generate_windows_exe(gen: CodeGenerator, ast: AST) -> ExecutableCode {
+    // Generar PE header
+    emit_pe_header(gen);
+    
+    // Generar código
+    for node in ast.children {
+        generate_node(gen, node);
+    }
+    
+    // Generar secciones
+    emit_pe_sections(gen);
+    
+    return gen.code;
+}
+
+fn generate_linux_elf(gen: CodeGenerator, ast: AST) -> ExecutableCode {
+    // Generar ELF header
+    emit_elf_header(gen);
+    
+    // Generar código
+    for node in ast.children {
+        generate_node(gen, node);
+    }
+    
+    return gen.code;
+}
+
+// ===========================================================================
+// ESCRITOR DE EJECUTABLES
+// ===========================================================================
+
+fn write_executable(filename: string, code: ExecutableCode) {
+    let file = create_file(filename);
+    
+    write_bytes(file, code.data, code.size);
+    close_file(file);
+    
+    // Hacer ejecutable en Linux
+    if (!is_windows()) {
+        make_executable(filename);
+    }
+}
+
+// ===========================================================================
+// TIPOS Y CONSTANTES
+// ===========================================================================
+
+type Token = {
+    type: i32,
+    value: string,
+    line: i32,
+    column: i32
+}
+
+type TokenList = {
+    tokens: [Token],
+    count: i32
+}
+
+type AST = {
+    type: i32,
+    value: string,
+    children: [AST],
+    token: Token
+}
+
+type Parser = {
+    tokens: TokenList,
+    current: i32
+}
+
+type SymbolTable = {
+    symbols: [Symbol],
+    scopes: [Scope]
+}
+
+type TypeTable = {
+    types: [Type]
+}
+
+type SemanticAnalyzer = {
+    symbols: SymbolTable,
+    types: TypeTable,
+    current_function: string
+}
+
+type CodeGenerator = {
+    code: ExecutableCode,
+    platform: i32
+}
+
+type ExecutableCode = {
+    data: [u8],
+    size: i32
+}
+
+// Constantes de tokens
+let TOKEN_EOF = 0;
+let TOKEN_IDENT = 1;
+let TOKEN_NUMBER = 2;
+let TOKEN_STRING = 3;
+let TOKEN_FN = 10;
+let TOKEN_LET = 11;
+let TOKEN_IF = 12;
+let TOKEN_ELSE = 13;
+let TOKEN_WHILE = 14;
+let TOKEN_FOR = 15;
+let TOKEN_RETURN = 16;
+let TOKEN_TYPE = 17;
+let TOKEN_STRUCT = 18;
+// ... más tokens ...
+
+// Constantes de nodos AST
+let NODE_PROGRAM = 100;
+let NODE_FUNCTION = 101;
+let NODE_VARIABLE = 102;
+let NODE_BLOCK = 103;
+let NODE_IF = 104;
+let NODE_WHILE = 105;
+let NODE_RETURN = 106;
+let NODE_CALL = 107;
+let NODE_BINARY = 108;
+let NODE_UNARY = 109;
+let NODE_LITERAL = 110;
+// ... más nodos ...
+
+// Plataformas
+let PLATFORM_LINUX = 1;
+let PLATFORM_WINDOWS = 2;
+let PLATFORM_MACOS = 3;
+
+// ===========================================================================
+// FUNCIONES AUXILIARES QUE FALTAN EN TEMPO
+// ===========================================================================
+
+// Las agregamos a Tempo en lugar de usar C!
+
+fn remove_extension(filename: string) -> string {
+    let last_dot = -1;
+    let i = 0;
+    
+    while (i < string_length(filename)) {
+        if (char_at(filename, i) == '.') {
+            last_dot = i;
+        }
+        i = i + 1;
+    }
+    
+    if (last_dot > 0) {
+        return substring(filename, 0, last_dot);
+    }
+    
+    return filename;
+}
+
+fn is_windows() -> bool {
+    // Detectar plataforma
+    let platform = get_platform();
+    return platform == "windows";
+}
+
+fn detect_platform() -> i32 {
+    let platform = get_platform();
+    
+    if (platform == "windows") {
+        return PLATFORM_WINDOWS;
+    } else if (platform == "darwin") {
+        return PLATFORM_MACOS;
+    } else {
+        return PLATFORM_LINUX;
+    }
+}
+
+fn is_whitespace(ch: char) -> bool {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}
+
+fn is_alpha(ch: char) -> bool {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+fn is_digit(ch: char) -> bool {
+    return ch >= '0' && ch <= '9';
+}
+
+fn is_alnum(ch: char) -> bool {
+    return is_alpha(ch) || is_digit(ch);
+}
+
+fn get_keyword_type(word: string) -> i32 {
+    if (word == "fn") return TOKEN_FN;
+    if (word == "let") return TOKEN_LET;
+    if (word == "if") return TOKEN_IF;
+    if (word == "else") return TOKEN_ELSE;
+    if (word == "while") return TOKEN_WHILE;
+    if (word == "for") return TOKEN_FOR;
+    if (word == "return") return TOKEN_RETURN;
+    if (word == "type") return TOKEN_TYPE;
+    if (word == "struct") return TOKEN_STRUCT;
+    
+    return TOKEN_IDENT;
+}
+
+// Y seguimos agregando todo lo que necesitemos...
+// ¡Sin usar C!

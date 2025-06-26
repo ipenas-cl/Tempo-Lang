@@ -1,0 +1,625 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Block allocator for AtomicFS
+// Provides deterministic block allocation with bounded search time
+// Uses hierarchical bitmaps for O(1) allocation
+
+module fs.allocator;
+
+import core.types;
+import core.memory;
+import core.atomic;
+
+// Allocator configuration
+const BITMAP_BLOCK_SIZE: u32 = 4096;
+const BITS_PER_BLOCK: u32 = BITMAP_BLOCK_SIZE * 8;
+const BITMAP_LEVELS: u32 = 3;              // Three-level hierarchy
+const CACHE_SIZE: u32 = 16;                // Cached bitmap blocks
+
+// Block allocator structure
+struct BlockAllocator {
+    device: *BlockDevice,
+    bitmap_start: u64,      // First bitmap block
+    block_count: u64,       // Total blocks in filesystem
+    free_blocks: u64,       // Number of free blocks
+    
+    // Hierarchical bitmap info
+    level_info: [BitmapLevel; BITMAP_LEVELS],
+    
+    // Allocation hint for next search
+    alloc_hint: u64,
+    
+    // Cache for bitmap blocks
+    cache: BitmapCache,
+    
+    // Lock for thread safety
+    lock: SpinLock,
+}
+
+// Bitmap level information
+struct BitmapLevel {
+    start_block: u64,       // First block of this level
+    block_count: u32,       // Number of blocks in this level
+    bits_per_entry: u32,    // Bits summarized per entry
+}
+
+// Bitmap cache entry
+struct BitmapCacheEntry {
+    block_num: u64,
+    bitmap: [u8; BITMAP_BLOCK_SIZE],
+    dirty: bool,
+    lru_time: u64,
+}
+
+// Bitmap cache
+struct BitmapCache {
+    entries: [BitmapCacheEntry; CACHE_SIZE],
+    lock: SpinLock,
+}
+
+// Initialize block allocator
+fn init(allocator: *BlockAllocator, device: *BlockDevice, 
+        bitmap_start: u64, block_count: u64) -> Result<void> {
+    
+    allocator.device = device;
+    allocator.bitmap_start = bitmap_start;
+    allocator.block_count = block_count;
+    allocator.alloc_hint = 0;
+    allocator.lock.init();
+    
+    // Calculate bitmap levels
+    setup_bitmap_levels(allocator)?;
+    
+    // Initialize cache
+    init_cache(&allocator.cache);
+    
+    // Count free blocks
+    allocator.free_blocks = count_free_blocks(allocator)?;
+    
+    return Ok(void);
+}
+
+// Setup hierarchical bitmap levels
+fn setup_bitmap_levels(allocator: *BlockAllocator) -> Result<void> {
+    let blocks_needed = (allocator.block_count + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+    
+    // Level 0: Actual block bitmap
+    allocator.level_info[0].start_block = allocator.bitmap_start;
+    allocator.level_info[0].block_count = blocks_needed;
+    allocator.level_info[0].bits_per_entry = 1;
+    
+    // Level 1: Summary of 32 blocks each
+    let level1_blocks = (blocks_needed + 31) / 32;
+    allocator.level_info[1].start_block = allocator.bitmap_start + blocks_needed;
+    allocator.level_info[1].block_count = level1_blocks;
+    allocator.level_info[1].bits_per_entry = 32;
+    
+    // Level 2: Summary of 32 level-1 blocks each
+    let level2_blocks = (level1_blocks + 31) / 32;
+    allocator.level_info[2].start_block = allocator.level_info[1].start_block + level1_blocks;
+    allocator.level_info[2].block_count = level2_blocks;
+    allocator.level_info[2].bits_per_entry = 32 * 32;
+    
+    return Ok(void);
+}
+
+// Allocate a single block with O(1) average time
+fn alloc_block(allocator: *BlockAllocator) -> Result<u64> {
+    allocator.lock.lock();
+    
+    if allocator.free_blocks == 0 {
+        allocator.lock.unlock();
+        return Err(Error.NoSpace);
+    }
+    
+    // Start search from hint
+    let block_num = find_free_block(allocator, allocator.alloc_hint)?;
+    
+    // Mark block as allocated
+    set_block_allocated(allocator, block_num)?;
+    
+    // Update free count and hint
+    allocator.free_blocks -= 1;
+    allocator.alloc_hint = (block_num + 1) % allocator.block_count;
+    
+    allocator.lock.unlock();
+    
+    return Ok(block_num);
+}
+
+// Allocate multiple contiguous blocks
+fn alloc_blocks(allocator: *BlockAllocator, count: u32) -> Result<u64> {
+    if count == 0 {
+        return Err(Error.InvalidCount);
+    }
+    
+    allocator.lock.lock();
+    
+    if allocator.free_blocks < count {
+        allocator.lock.unlock();
+        return Err(Error.NoSpace);
+    }
+    
+    // Find contiguous free blocks
+    let start_block = find_contiguous_blocks(allocator, count)?;
+    
+    // Mark blocks as allocated
+    for i in 0..count {
+        set_block_allocated(allocator, start_block + i)?;
+    }
+    
+    // Update free count
+    allocator.free_blocks -= count;
+    allocator.alloc_hint = (start_block + count) % allocator.block_count;
+    
+    allocator.lock.unlock();
+    
+    return Ok(start_block);
+}
+
+// Free a single block
+fn free_block(allocator: *BlockAllocator, block_num: u64) -> Result<void> {
+    if block_num >= allocator.block_count {
+        return Err(Error.InvalidBlock);
+    }
+    
+    allocator.lock.lock();
+    
+    // Check if already free
+    if is_block_free(allocator, block_num)? {
+        allocator.lock.unlock();
+        return Err(Error.BlockAlreadyFree);
+    }
+    
+    // Mark block as free
+    set_block_free(allocator, block_num)?;
+    
+    // Update free count
+    allocator.free_blocks += 1;
+    
+    allocator.lock.unlock();
+    
+    return Ok(void);
+}
+
+// Free multiple contiguous blocks
+fn free_blocks(allocator: *BlockAllocator, start_block: u64, count: u32) -> Result<void> {
+    if start_block + count > allocator.block_count {
+        return Err(Error.InvalidBlock);
+    }
+    
+    allocator.lock.lock();
+    
+    // Free each block
+    for i in 0..count {
+        if !is_block_free(allocator, start_block + i)? {
+            set_block_free(allocator, start_block + i)?;
+            allocator.free_blocks += 1;
+        }
+    }
+    
+    allocator.lock.unlock();
+    
+    return Ok(void);
+}
+
+// Find a free block using hierarchical bitmap
+fn find_free_block(allocator: *BlockAllocator, hint: u64) -> Result<u64> {
+    // First try near the hint (spatial locality)
+    let hint_result = search_near_hint(allocator, hint);
+    if hint_result.is_ok() {
+        return hint_result;
+    }
+    
+    // Use hierarchical search starting from top level
+    return hierarchical_search(allocator);
+}
+
+// Search for free block near hint
+fn search_near_hint(allocator: *BlockAllocator, hint: u64) -> Result<u64> {
+    // Search in the same bitmap block as hint
+    let bitmap_block = hint / BITS_PER_BLOCK;
+    let bitmap_offset = allocator.level_info[0].start_block + bitmap_block;
+    
+    let bitmap = load_bitmap_block(allocator, bitmap_offset)?;
+    
+    // Search from hint position
+    let bit_offset = hint % BITS_PER_BLOCK;
+    let free_bit = find_first_zero_bit(bitmap, bit_offset, BITS_PER_BLOCK);
+    
+    if free_bit < BITS_PER_BLOCK {
+        return Ok(bitmap_block * BITS_PER_BLOCK + free_bit);
+    }
+    
+    return Err(Error.NotFound);
+}
+
+// Hierarchical search for free block
+fn hierarchical_search(allocator: *BlockAllocator) -> Result<u64> {
+    // Start from top level
+    for level in (0..BITMAP_LEVELS).rev() {
+        let level_info = &allocator.level_info[level];
+        
+        // Search this level for non-full entry
+        for i in 0..level_info.block_count {
+            let block_offset = level_info.start_block + i;
+            let bitmap = load_bitmap_block(allocator, block_offset)?;
+            
+            let free_bit = find_first_zero_bit(bitmap, 0, BITMAP_BLOCK_SIZE * 8);
+            if free_bit < BITMAP_BLOCK_SIZE * 8 {
+                // Found free space, drill down
+                if level == 0 {
+                    // Found actual free block
+                    return Ok(i * BITS_PER_BLOCK + free_bit);
+                } else {
+                    // Continue search in lower level
+                    let lower_start = free_bit * level_info.bits_per_entry;
+                    return search_in_range(allocator, level - 1, lower_start,
+                                         level_info.bits_per_entry);
+                }
+            }
+        }
+    }
+    
+    return Err(Error.NoSpace);
+}
+
+// Search for free block in specific range
+fn search_in_range(allocator: *BlockAllocator, level: u32, 
+                  start: u64, count: u64) -> Result<u64> {
+    
+    let level_info = &allocator.level_info[level];
+    let blocks_to_search = min(count / BITS_PER_BLOCK, level_info.block_count);
+    
+    for i in 0..blocks_to_search {
+        let block_idx = start / BITS_PER_BLOCK + i;
+        if block_idx >= level_info.block_count {
+            break;
+        }
+        
+        let block_offset = level_info.start_block + block_idx;
+        let bitmap = load_bitmap_block(allocator, block_offset)?;
+        
+        let free_bit = find_first_zero_bit(bitmap, 0, BITMAP_BLOCK_SIZE * 8);
+        if free_bit < BITMAP_BLOCK_SIZE * 8 {
+            if level == 0 {
+                // Found actual free block
+                return Ok(block_idx * BITS_PER_BLOCK + free_bit);
+            } else {
+                // Continue drilling down
+                let lower_start = free_bit * level_info.bits_per_entry;
+                return search_in_range(allocator, level - 1, lower_start,
+                                     level_info.bits_per_entry);
+            }
+        }
+    }
+    
+    return Err(Error.NotFound);
+}
+
+// Find contiguous free blocks
+fn find_contiguous_blocks(allocator: *BlockAllocator, count: u32) -> Result<u64> {
+    let mut found = 0;
+    let mut start = 0;
+    
+    // Scan bitmap for contiguous free blocks
+    for block_num in 0..allocator.block_count {
+        if is_block_free(allocator, block_num)? {
+            if found == 0 {
+                start = block_num;
+            }
+            found += 1;
+            
+            if found == count {
+                return Ok(start);
+            }
+        } else {
+            found = 0;
+        }
+    }
+    
+    return Err(Error.NoContiguousSpace);
+}
+
+// Check if block is free
+fn is_block_free(allocator: *BlockAllocator, block_num: u64) -> Result<bool> {
+    let bitmap_block = block_num / BITS_PER_BLOCK;
+    let bit_offset = block_num % BITS_PER_BLOCK;
+    let bitmap_offset = allocator.level_info[0].start_block + bitmap_block;
+    
+    let bitmap = load_bitmap_block(allocator, bitmap_offset)?;
+    
+    return Ok(!test_bit(bitmap, bit_offset));
+}
+
+// Set block as allocated
+fn set_block_allocated(allocator: *BlockAllocator, block_num: u64) -> Result<void> {
+    // Update level 0 bitmap
+    let bitmap_block = block_num / BITS_PER_BLOCK;
+    let bit_offset = block_num % BITS_PER_BLOCK;
+    let bitmap_offset = allocator.level_info[0].start_block + bitmap_block;
+    
+    let bitmap = load_bitmap_block_mut(allocator, bitmap_offset)?;
+    set_bit(bitmap, bit_offset);
+    mark_bitmap_dirty(allocator, bitmap_offset);
+    
+    // Update higher levels if needed
+    update_summary_levels(allocator, block_num, true)?;
+    
+    return Ok(void);
+}
+
+// Set block as free
+fn set_block_free(allocator: *BlockAllocator, block_num: u64) -> Result<void> {
+    // Update level 0 bitmap
+    let bitmap_block = block_num / BITS_PER_BLOCK;
+    let bit_offset = block_num % BITS_PER_BLOCK;
+    let bitmap_offset = allocator.level_info[0].start_block + bitmap_block;
+    
+    let bitmap = load_bitmap_block_mut(allocator, bitmap_offset)?;
+    clear_bit(bitmap, bit_offset);
+    mark_bitmap_dirty(allocator, bitmap_offset);
+    
+    // Update higher levels if needed
+    update_summary_levels(allocator, block_num, false)?;
+    
+    return Ok(void);
+}
+
+// Update summary levels after allocation/free
+fn update_summary_levels(allocator: *BlockAllocator, block_num: u64, 
+                        allocated: bool) -> Result<void> {
+    
+    let mut current_block = block_num;
+    
+    // Update each level
+    for level in 1..BITMAP_LEVELS {
+        let prev_level = &allocator.level_info[level - 1];
+        let this_level = &allocator.level_info[level];
+        
+        // Which block in previous level?
+        let prev_bitmap_block = current_block / BITS_PER_BLOCK;
+        
+        // Which bit in this level represents that block?
+        let summary_block = prev_bitmap_block / BITS_PER_BLOCK;
+        let summary_bit = prev_bitmap_block % BITS_PER_BLOCK;
+        
+        if summary_block >= this_level.block_count {
+            break;
+        }
+        
+        let bitmap_offset = this_level.start_block + summary_block;
+        let bitmap = load_bitmap_block_mut(allocator, bitmap_offset)?;
+        
+        if allocated {
+            // Check if the whole block is now full
+            if is_bitmap_block_full(allocator, prev_level.start_block + prev_bitmap_block)? {
+                set_bit(bitmap, summary_bit);
+                mark_bitmap_dirty(allocator, bitmap_offset);
+            }
+        } else {
+            // Block now has free space
+            clear_bit(bitmap, summary_bit);
+            mark_bitmap_dirty(allocator, bitmap_offset);
+        }
+        
+        current_block = prev_bitmap_block;
+    }
+    
+    return Ok(void);
+}
+
+// Check if a bitmap block is completely full
+fn is_bitmap_block_full(allocator: *BlockAllocator, block_offset: u64) -> Result<bool> {
+    let bitmap = load_bitmap_block(allocator, block_offset)?;
+    
+    // Check if all bits are set
+    for i in 0..BITMAP_BLOCK_SIZE {
+        if bitmap[i] != 0xFF {
+            return Ok(false);
+        }
+    }
+    
+    return Ok(true);
+}
+
+// Count total free blocks (used during init)
+fn count_free_blocks(allocator: *BlockAllocator) -> Result<u64> {
+    let mut free_count: u64 = 0;
+    let level0 = &allocator.level_info[0];
+    
+    // Count in each bitmap block
+    for i in 0..level0.block_count {
+        let bitmap = load_bitmap_block(allocator, level0.start_block + i)?;
+        free_count += count_zero_bits(bitmap, BITMAP_BLOCK_SIZE);
+    }
+    
+    // Adjust for blocks beyond filesystem size
+    let total_bits = level0.block_count * BITS_PER_BLOCK;
+    if total_bits > allocator.block_count {
+        free_count -= total_bits - allocator.block_count;
+    }
+    
+    return Ok(free_count);
+}
+
+// Bitmap cache operations
+
+fn init_cache(cache: *BitmapCache) {
+    cache.lock.init();
+    
+    for i in 0..CACHE_SIZE {
+        cache.entries[i].block_num = INVALID_BLOCK;
+        cache.entries[i].dirty = false;
+        cache.entries[i].lru_time = 0;
+    }
+}
+
+fn load_bitmap_block(allocator: *BlockAllocator, block_num: u64) -> Result<*u8> {
+    let cache = &allocator.cache;
+    
+    cache.lock.lock();
+    
+    // Check if in cache
+    for i in 0..CACHE_SIZE {
+        if cache.entries[i].block_num == block_num {
+            cache.entries[i].lru_time = get_time();
+            cache.lock.unlock();
+            return Ok(&cache.entries[i].bitmap);
+        }
+    }
+    
+    // Find LRU entry to evict
+    let mut lru_idx = 0;
+    let mut lru_time = cache.entries[0].lru_time;
+    
+    for i in 1..CACHE_SIZE {
+        if cache.entries[i].lru_time < lru_time {
+            lru_idx = i;
+            lru_time = cache.entries[i].lru_time;
+        }
+    }
+    
+    // Write back if dirty
+    if cache.entries[lru_idx].dirty {
+        allocator.device.write_block(cache.entries[lru_idx].block_num,
+                                   &cache.entries[lru_idx].bitmap)?;
+        cache.entries[lru_idx].dirty = false;
+    }
+    
+    // Load new block
+    allocator.device.read_block(block_num, &cache.entries[lru_idx].bitmap)?;
+    cache.entries[lru_idx].block_num = block_num;
+    cache.entries[lru_idx].lru_time = get_time();
+    
+    cache.lock.unlock();
+    
+    return Ok(&cache.entries[lru_idx].bitmap);
+}
+
+fn load_bitmap_block_mut(allocator: *BlockAllocator, block_num: u64) -> Result<*u8> {
+    // Same as load_bitmap_block but returns mutable pointer
+    return load_bitmap_block(allocator, block_num);
+}
+
+fn mark_bitmap_dirty(allocator: *BlockAllocator, block_num: u64) {
+    let cache = &allocator.cache;
+    
+    cache.lock.lock();
+    
+    for i in 0..CACHE_SIZE {
+        if cache.entries[i].block_num == block_num {
+            cache.entries[i].dirty = true;
+            break;
+        }
+    }
+    
+    cache.lock.unlock();
+}
+
+fn flush_bitmap_cache(allocator: *BlockAllocator) -> Result<void> {
+    let cache = &allocator.cache;
+    
+    cache.lock.lock();
+    
+    // Write all dirty blocks
+    for i in 0..CACHE_SIZE {
+        if cache.entries[i].dirty && cache.entries[i].block_num != INVALID_BLOCK {
+            allocator.device.write_block(cache.entries[i].block_num,
+                                       &cache.entries[i].bitmap)?;
+            cache.entries[i].dirty = false;
+        }
+    }
+    
+    cache.lock.unlock();
+    
+    return Ok(void);
+}
+
+// Bit manipulation functions
+
+fn test_bit(bitmap: *u8, bit: u64) -> bool {
+    let byte_idx = bit / 8;
+    let bit_idx = bit % 8;
+    return (bitmap[byte_idx] & (1 << bit_idx)) != 0;
+}
+
+fn set_bit(bitmap: *u8, bit: u64) {
+    let byte_idx = bit / 8;
+    let bit_idx = bit % 8;
+    bitmap[byte_idx] |= (1 << bit_idx);
+}
+
+fn clear_bit(bitmap: *u8, bit: u64) {
+    let byte_idx = bit / 8;
+    let bit_idx = bit % 8;
+    bitmap[byte_idx] &= ~(1 << bit_idx);
+}
+
+fn find_first_zero_bit(bitmap: *u8, start: u64, count: u64) -> u64 {
+    for i in start..count {
+        if !test_bit(bitmap, i) {
+            return i;
+        }
+    }
+    return count; // Not found
+}
+
+fn count_zero_bits(bitmap: *u8, size: u32) -> u64 {
+    let mut count: u64 = 0;
+    
+    for i in 0..size {
+        let byte = bitmap[i];
+        
+        // Count zero bits in byte using lookup table or bit tricks
+        count += count_zeros_in_byte(byte);
+    }
+    
+    return count;
+}
+
+fn count_zeros_in_byte(byte: u8) -> u32 {
+    // Brian Kernighan's algorithm adapted for counting zeros
+    let mut count: u32 = 8;
+    let mut val = byte;
+    
+    while val != 0 {
+        val &= val - 1;
+        count -= 1;
+    }
+    
+    return count;
+}
+
+// Inode allocation support
+fn alloc_inode(allocator: *BlockAllocator) -> Result<u64> {
+    // For inodes, we might use a separate bitmap or allocate from
+    // a reserved range of blocks. This is a simplified version.
+    return alloc_block(allocator);
+}
+
+fn free_inode(allocator: *BlockAllocator, inode_num: u64) -> Result<void> {
+    return free_block(allocator, inode_num);
+}
+
+// Constants
+const INVALID_BLOCK: u64 = 0xFFFFFFFFFFFFFFFF;
+
+// Error types
+enum Error {
+    NoSpace,
+    InvalidBlock,
+    InvalidCount,
+    BlockAlreadyFree,
+    NotFound,
+    NoContiguousSpace,
+}

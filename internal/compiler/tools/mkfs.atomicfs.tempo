@@ -1,0 +1,946 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// mkfs.atomicfs - AtomicFS filesystem creation tool
+// Creates a new AtomicFS filesystem with deterministic layout
+
+module tools.mkfs.atomicfs;
+
+import core.types;
+import core.memory;
+import core.string;
+import core.io;
+import fs.atomicfs;
+import fs.btree;
+import fs.journal;
+import fs.allocator;
+
+// Default filesystem parameters
+const DEFAULT_BLOCK_SIZE: u32 = 4096;
+const DEFAULT_JOURNAL_SIZE: u32 = 8192;    // 8K blocks = 32MB
+const DEFAULT_INODE_RATIO: u32 = 16384;    // One inode per 16KB
+const MIN_FS_SIZE: u64 = 64 * 1024 * 1024; // 64MB minimum
+
+// Reserved blocks
+const SUPERBLOCK_OFFSET: u64 = 0;
+const BACKUP_SUPERBLOCK_OFFSET: u64 = 8192 / DEFAULT_BLOCK_SIZE;
+const RESERVED_BLOCKS: u64 = 1024;         // First 4MB reserved
+
+// Filesystem creation options
+struct MkfsOptions {
+    device_path: *const u8,
+    label: [u8; 64],
+    block_size: u32,
+    journal_size: u32,
+    inode_ratio: u32,
+    force: bool,
+    verbose: bool,
+}
+
+// Progress tracking
+struct Progress {
+    total_steps: u32,
+    current_step: u32,
+    description: [u8; 128],
+}
+
+// Main entry point
+fn main(argc: i32, argv: **u8) -> i32 {
+    let options: MkfsOptions;
+    
+    // Parse command line arguments
+    if !parse_arguments(argc, argv, &options) {
+        print_usage(argv[0]);
+        return 1;
+    }
+    
+    // Validate options
+    if let err = validate_options(&options) {
+        print_error("Invalid options: ", err);
+        return 1;
+    }
+    
+    // Open device
+    let device = open_device(options.device_path);
+    if device == null {
+        print_error("Failed to open device: ", options.device_path);
+        return 1;
+    }
+    
+    // Get device size
+    let device_size = get_device_size(device);
+    if device_size < MIN_FS_SIZE {
+        print_error("Device too small. Minimum size: ", MIN_FS_SIZE);
+        close_device(device);
+        return 1;
+    }
+    
+    // Check if device already has a filesystem
+    if !options.force && has_filesystem(device) {
+        print_error("Device already contains a filesystem. Use -f to force.", "");
+        close_device(device);
+        return 1;
+    }
+    
+    // Create filesystem
+    if options.verbose {
+        print_info("Creating AtomicFS filesystem...", "");
+    }
+    
+    let result = create_filesystem(device, device_size, &options);
+    if result.is_err() {
+        print_error("Failed to create filesystem: ", result.unwrap_err());
+        close_device(device);
+        return 1;
+    }
+    
+    // Success
+    if options.verbose {
+        print_info("Filesystem created successfully!", "");
+        print_filesystem_info(device, device_size, &options);
+    }
+    
+    close_device(device);
+    return 0;
+}
+
+// Parse command line arguments
+fn parse_arguments(argc: i32, argv: **u8, options: *MkfsOptions) -> bool {
+    // Initialize with defaults
+    options.device_path = null;
+    string.copy(options.label, "");
+    options.block_size = DEFAULT_BLOCK_SIZE;
+    options.journal_size = DEFAULT_JOURNAL_SIZE;
+    options.inode_ratio = DEFAULT_INODE_RATIO;
+    options.force = false;
+    options.verbose = false;
+    
+    let i = 1;
+    while i < argc {
+        let arg = argv[i];
+        
+        if string.compare(arg, "-L") == 0 || string.compare(arg, "--label") == 0 {
+            if i + 1 >= argc {
+                print_error("Option requires an argument: ", arg);
+                return false;
+            }
+            i += 1;
+            string.copy(options.label, argv[i]);
+            
+        } else if string.compare(arg, "-b") == 0 || string.compare(arg, "--block-size") == 0 {
+            if i + 1 >= argc {
+                print_error("Option requires an argument: ", arg);
+                return false;
+            }
+            i += 1;
+            options.block_size = parse_size(argv[i]);
+            
+        } else if string.compare(arg, "-j") == 0 || string.compare(arg, "--journal-size") == 0 {
+            if i + 1 >= argc {
+                print_error("Option requires an argument: ", arg);
+                return false;
+            }
+            i += 1;
+            options.journal_size = parse_size(argv[i]);
+            
+        } else if string.compare(arg, "-i") == 0 || string.compare(arg, "--inode-ratio") == 0 {
+            if i + 1 >= argc {
+                print_error("Option requires an argument: ", arg);
+                return false;
+            }
+            i += 1;
+            options.inode_ratio = parse_size(argv[i]);
+            
+        } else if string.compare(arg, "-f") == 0 || string.compare(arg, "--force") == 0 {
+            options.force = true;
+            
+        } else if string.compare(arg, "-v") == 0 || string.compare(arg, "--verbose") == 0 {
+            options.verbose = true;
+            
+        } else if string.compare(arg, "-h") == 0 || string.compare(arg, "--help") == 0 {
+            return false;
+            
+        } else if arg[0] == '-' {
+            print_error("Unknown option: ", arg);
+            return false;
+            
+        } else {
+            // Device path
+            if options.device_path != null {
+                print_error("Multiple devices specified", "");
+                return false;
+            }
+            options.device_path = arg;
+        }
+        
+        i += 1;
+    }
+    
+    if options.device_path == null {
+        print_error("No device specified", "");
+        return false;
+    }
+    
+    return true;
+}
+
+// Validate options
+fn validate_options(options: *MkfsOptions) -> Result<void> {
+    // Check block size
+    if options.block_size < 512 || options.block_size > 65536 {
+        return Err("Block size must be between 512 and 65536");
+    }
+    
+    if !is_power_of_two(options.block_size) {
+        return Err("Block size must be a power of 2");
+    }
+    
+    // Check journal size
+    if options.journal_size < 1024 || options.journal_size > 131072 {
+        return Err("Journal size must be between 1024 and 131072 blocks");
+    }
+    
+    // Check inode ratio
+    if options.inode_ratio < options.block_size {
+        return Err("Inode ratio must be at least block size");
+    }
+    
+    // Check label length
+    if string.length(options.label) > 63 {
+        return Err("Label too long (max 63 characters)");
+    }
+    
+    return Ok(void);
+}
+
+// Create filesystem
+fn create_filesystem(device: *BlockDevice, device_size: u64, 
+                    options: *MkfsOptions) -> Result<void> {
+    
+    let progress: Progress;
+    progress.total_steps = 10;
+    progress.current_step = 0;
+    
+    // Calculate filesystem parameters
+    let block_count = device_size / options.block_size;
+    let inode_count = block_count * options.block_size / options.inode_ratio;
+    
+    // Calculate layout
+    let layout = calculate_layout(block_count, inode_count, options)?;
+    
+    // Step 1: Zero critical areas
+    update_progress(&progress, 1, "Zeroing critical areas...");
+    zero_critical_areas(device, &layout, options)?;
+    
+    // Step 2: Create superblock
+    update_progress(&progress, 2, "Creating superblock...");
+    let superblock = create_superblock(&layout, options);
+    write_superblock(device, &superblock)?;
+    
+    // Step 3: Initialize journal
+    update_progress(&progress, 3, "Initializing journal...");
+    init_journal_area(device, &layout)?;
+    
+    // Step 4: Initialize block bitmap
+    update_progress(&progress, 4, "Creating block bitmap...");
+    init_block_bitmap(device, &layout)?;
+    
+    // Step 5: Initialize inode bitmap
+    update_progress(&progress, 5, "Creating inode bitmap...");
+    init_inode_bitmap(device, &layout)?;
+    
+    // Step 6: Initialize B-tree
+    update_progress(&progress, 6, "Creating inode B-tree...");
+    init_btree(device, &layout)?;
+    
+    // Step 7: Create root directory
+    update_progress(&progress, 7, "Creating root directory...");
+    create_root_directory(device, &layout)?;
+    
+    // Step 8: Create lost+found directory
+    update_progress(&progress, 8, "Creating lost+found directory...");
+    create_lost_found(device, &layout)?;
+    
+    // Step 9: Update superblock with final values
+    update_progress(&progress, 9, "Updating superblock...");
+    finalize_superblock(device, &superblock, &layout)?;
+    
+    // Step 10: Sync everything to disk
+    update_progress(&progress, 10, "Syncing to disk...");
+    sync_device(device)?;
+    
+    return Ok(void);
+}
+
+// Filesystem layout structure
+struct FilesystemLayout {
+    block_size: u32,
+    block_count: u64,
+    inode_count: u64,
+    
+    // Block allocations
+    superblock_block: u64,
+    backup_superblock_block: u64,
+    journal_start: u64,
+    journal_blocks: u32,
+    block_bitmap_start: u64,
+    block_bitmap_blocks: u32,
+    inode_bitmap_start: u64,
+    inode_bitmap_blocks: u32,
+    btree_root_block: u64,
+    first_data_block: u64,
+    
+    // Calculated values
+    free_blocks: u64,
+    free_inodes: u64,
+}
+
+// Calculate filesystem layout
+fn calculate_layout(block_count: u64, inode_count: u64, 
+                   options: *MkfsOptions) -> Result<FilesystemLayout> {
+    
+    let layout: FilesystemLayout;
+    layout.block_size = options.block_size;
+    layout.block_count = block_count;
+    layout.inode_count = inode_count;
+    
+    // Fixed locations
+    layout.superblock_block = SUPERBLOCK_OFFSET;
+    layout.backup_superblock_block = BACKUP_SUPERBLOCK_OFFSET;
+    
+    // Journal after reserved area
+    layout.journal_start = RESERVED_BLOCKS;
+    layout.journal_blocks = options.journal_size;
+    
+    // Block bitmap after journal
+    layout.block_bitmap_start = layout.journal_start + layout.journal_blocks;
+    layout.block_bitmap_blocks = (block_count + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+    
+    // Inode bitmap after block bitmap
+    layout.inode_bitmap_start = layout.block_bitmap_start + layout.block_bitmap_blocks;
+    layout.inode_bitmap_blocks = (inode_count + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+    
+    // B-tree root after bitmaps
+    layout.btree_root_block = layout.inode_bitmap_start + layout.inode_bitmap_blocks;
+    
+    // First data block
+    layout.first_data_block = layout.btree_root_block + 1;
+    
+    // Calculate free space
+    let metadata_blocks = layout.first_data_block;
+    if metadata_blocks >= block_count {
+        return Err("Not enough space for filesystem metadata");
+    }
+    
+    layout.free_blocks = block_count - metadata_blocks;
+    layout.free_inodes = inode_count - 1; // Reserve inode 0
+    
+    return Ok(layout);
+}
+
+// Zero critical areas
+fn zero_critical_areas(device: *BlockDevice, layout: *FilesystemLayout,
+                      options: *MkfsOptions) -> Result<void> {
+    
+    let zero_block: [u8; MAX_BLOCK_SIZE];
+    memory.zero(&zero_block, options.block_size);
+    
+    // Zero superblock areas
+    device.write_block(layout.superblock_block, &zero_block)?;
+    device.write_block(layout.backup_superblock_block, &zero_block)?;
+    
+    // Zero first blocks of each metadata area
+    device.write_block(layout.journal_start, &zero_block)?;
+    device.write_block(layout.block_bitmap_start, &zero_block)?;
+    device.write_block(layout.inode_bitmap_start, &zero_block)?;
+    device.write_block(layout.btree_root_block, &zero_block)?;
+    
+    return Ok(void);
+}
+
+// Create superblock
+fn create_superblock(layout: *FilesystemLayout, options: *MkfsOptions) -> Superblock {
+    let sb: Superblock;
+    
+    sb.magic = MAGIC_NUMBER;
+    sb.version = 1;
+    sb.block_count = layout.block_count;
+    sb.free_blocks = layout.free_blocks;
+    sb.inode_count = layout.inode_count;
+    sb.free_inodes = layout.free_inodes;
+    sb.root_inode = ROOT_INODE_NUMBER;
+    sb.journal_start = layout.journal_start;
+    sb.journal_size = layout.journal_blocks;
+    sb.btree_root = layout.btree_root_block;
+    sb.block_bitmap = layout.block_bitmap_start;
+    sb.inode_bitmap = layout.inode_bitmap_start;
+    sb.first_data_block = layout.first_data_block;
+    sb.mount_count = 0;
+    sb.mount_time = 0;
+    sb.last_check = get_time();
+    sb.checksum = 0;
+    
+    // Calculate checksum
+    sb.checksum = calculate_checksum(&sb);
+    
+    return sb;
+}
+
+// Write superblock
+fn write_superblock(device: *BlockDevice, sb: *Superblock) -> Result<void> {
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&block, DEFAULT_BLOCK_SIZE);
+    memory.copy(&block, sb, sizeof(Superblock));
+    
+    // Write primary and backup
+    device.write_block(SUPERBLOCK_OFFSET, &block)?;
+    device.write_block(BACKUP_SUPERBLOCK_OFFSET, &block)?;
+    
+    return Ok(void);
+}
+
+// Initialize journal area
+fn init_journal_area(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    // Create journal header
+    let header: JournalHeader;
+    header.magic = JOURNAL_MAGIC;
+    header.version = 1;
+    header.block_size = layout.block_size;
+    header.journal_size = layout.journal_blocks;
+    header.sequence = 0;
+    header.head = 0;
+    header.tail = 0;
+    header.checksum = calculate_header_checksum(&header);
+    
+    // Write journal header
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&block, DEFAULT_BLOCK_SIZE);
+    memory.copy(&block, &header, sizeof(JournalHeader));
+    device.write_block(layout.journal_start, &block)?;
+    
+    // Clear rest of journal
+    memory.zero(&block, DEFAULT_BLOCK_SIZE);
+    for i in 1..layout.journal_blocks {
+        device.write_block(layout.journal_start + i, &block)?;
+    }
+    
+    return Ok(void);
+}
+
+// Initialize block bitmap
+fn init_block_bitmap(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    let bitmap_block: [u8; DEFAULT_BLOCK_SIZE];
+    
+    // Mark reserved blocks as allocated
+    for block_idx in 0..layout.block_bitmap_blocks {
+        memory.zero(&bitmap_block, DEFAULT_BLOCK_SIZE);
+        
+        let start_bit = block_idx * BITS_PER_BLOCK;
+        let end_bit = min((block_idx + 1) * BITS_PER_BLOCK, layout.block_count);
+        
+        // Mark metadata blocks as allocated
+        for bit in start_bit..end_bit {
+            if bit < layout.first_data_block {
+                set_bit(&bitmap_block, bit % BITS_PER_BLOCK);
+            }
+        }
+        
+        device.write_block(layout.block_bitmap_start + block_idx, &bitmap_block)?;
+    }
+    
+    return Ok(void);
+}
+
+// Initialize inode bitmap
+fn init_inode_bitmap(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    let bitmap_block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&bitmap_block, DEFAULT_BLOCK_SIZE);
+    
+    // Mark inode 0 as reserved (never used)
+    set_bit(&bitmap_block, 0);
+    
+    // Mark root inode as allocated
+    set_bit(&bitmap_block, ROOT_INODE_NUMBER);
+    
+    // Write first bitmap block
+    device.write_block(layout.inode_bitmap_start, &bitmap_block)?;
+    
+    // Clear remaining bitmap blocks
+    memory.zero(&bitmap_block, DEFAULT_BLOCK_SIZE);
+    for i in 1..layout.inode_bitmap_blocks {
+        device.write_block(layout.inode_bitmap_start + i, &bitmap_block)?;
+    }
+    
+    return Ok(void);
+}
+
+// Initialize B-tree
+fn init_btree(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    // Create B-tree metadata
+    let metadata: BTreeMetadata;
+    metadata.magic = BTREE_MAGIC;
+    metadata.height = 1;
+    metadata.entry_count = 0;
+    metadata.free_list = 0;
+    
+    // Create root node
+    let root: BTreeNode<u64, Inode>;
+    root.is_leaf = true;
+    root.num_keys = 0;
+    root.parent = 0;
+    
+    // Write B-tree root
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&block, DEFAULT_BLOCK_SIZE);
+    memory.copy(&block, &metadata, sizeof(BTreeMetadata));
+    memory.copy(&block[sizeof(BTreeMetadata)], &root, sizeof(BTreeNode<u64, Inode>));
+    
+    device.write_block(layout.btree_root_block, &block)?;
+    
+    return Ok(void);
+}
+
+// Create root directory
+fn create_root_directory(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    // Create root inode
+    let root_inode: Inode;
+    memory.zero(&root_inode, sizeof(Inode));
+    
+    root_inode.mode = S_IFDIR | 0o755;
+    root_inode.uid = 0;
+    root_inode.gid = 0;
+    root_inode.size = layout.block_size; // One block for . and ..
+    root_inode.atime = get_time();
+    root_inode.mtime = root_inode.atime;
+    root_inode.ctime = root_inode.atime;
+    root_inode.blocks = 1;
+    root_inode.link_count = 2; // . and ..
+    
+    // Allocate first data block for root directory
+    root_inode.direct[0] = layout.first_data_block;
+    
+    // Add root inode to B-tree
+    add_inode_to_btree(device, layout, ROOT_INODE_NUMBER, &root_inode)?;
+    
+    // Create directory entries
+    let dir_block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&dir_block, DEFAULT_BLOCK_SIZE);
+    
+    // Add . entry
+    let dot_entry: DirEntry;
+    dot_entry.inode = ROOT_INODE_NUMBER;
+    dot_entry.rec_len = sizeof(DirEntry);
+    dot_entry.name_len = 1;
+    dot_entry.file_type = FileType.Directory;
+    dot_entry.name[0] = '.';
+    dot_entry.name[1] = 0;
+    
+    memory.copy(&dir_block, &dot_entry, sizeof(DirEntry));
+    
+    // Add .. entry
+    let dotdot_entry: DirEntry;
+    dotdot_entry.inode = ROOT_INODE_NUMBER;
+    dotdot_entry.rec_len = layout.block_size - sizeof(DirEntry);
+    dotdot_entry.name_len = 2;
+    dotdot_entry.file_type = FileType.Directory;
+    dotdot_entry.name[0] = '.';
+    dotdot_entry.name[1] = '.';
+    dotdot_entry.name[2] = 0;
+    
+    memory.copy(&dir_block[sizeof(DirEntry)], &dotdot_entry, sizeof(DirEntry));
+    
+    // Write directory block
+    device.write_block(layout.first_data_block, &dir_block)?;
+    
+    return Ok(void);
+}
+
+// Create lost+found directory
+fn create_lost_found(device: *BlockDevice, layout: *FilesystemLayout) -> Result<void> {
+    // Allocate inode for lost+found
+    const LOST_FOUND_INODE: u64 = 11;
+    
+    // Mark inode as allocated in bitmap
+    mark_inode_allocated(device, layout, LOST_FOUND_INODE)?;
+    
+    // Create lost+found inode
+    let lf_inode: Inode;
+    memory.zero(&lf_inode, sizeof(Inode));
+    
+    lf_inode.mode = S_IFDIR | 0o700;
+    lf_inode.uid = 0;
+    lf_inode.gid = 0;
+    lf_inode.size = layout.block_size;
+    lf_inode.atime = get_time();
+    lf_inode.mtime = lf_inode.atime;
+    lf_inode.ctime = lf_inode.atime;
+    lf_inode.blocks = 1;
+    lf_inode.link_count = 2;
+    
+    // Allocate block for lost+found
+    let lf_block = layout.first_data_block + 1;
+    lf_inode.direct[0] = lf_block;
+    
+    // Mark block as allocated
+    mark_block_allocated(device, layout, lf_block)?;
+    
+    // Add to B-tree
+    add_inode_to_btree(device, layout, LOST_FOUND_INODE, &lf_inode)?;
+    
+    // Create directory entries for lost+found
+    let dir_block: [u8; DEFAULT_BLOCK_SIZE];
+    memory.zero(&dir_block, DEFAULT_BLOCK_SIZE);
+    
+    // Add . and .. entries
+    create_dot_entries(&dir_block, LOST_FOUND_INODE, ROOT_INODE_NUMBER, layout.block_size);
+    
+    // Write directory block
+    device.write_block(lf_block, &dir_block)?;
+    
+    // Add lost+found entry to root directory
+    add_dir_entry_to_root(device, layout, "lost+found", LOST_FOUND_INODE)?;
+    
+    return Ok(void);
+}
+
+// Helper functions
+
+fn add_inode_to_btree(device: *BlockDevice, layout: *FilesystemLayout,
+                     inode_num: u64, inode: *Inode) -> Result<void> {
+    // This is a simplified version - in reality would need full B-tree implementation
+    // For mkfs, we can directly write to the B-tree since it's empty
+    
+    // Read B-tree root
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    device.read_block(layout.btree_root_block, &block)?;
+    
+    // Update metadata
+    let metadata = cast<*BTreeMetadata>(&block);
+    metadata.entry_count += 1;
+    
+    // Add to root node (assuming it has space)
+    let node = cast<*BTreeNode<u64, Inode>>(&block[sizeof(BTreeMetadata)]);
+    node.keys[node.num_keys] = inode_num;
+    memory.copy(&node.values[node.num_keys], inode, sizeof(Inode));
+    node.num_keys += 1;
+    
+    // Write back
+    device.write_block(layout.btree_root_block, &block)?;
+    
+    return Ok(void);
+}
+
+fn mark_inode_allocated(device: *BlockDevice, layout: *FilesystemLayout,
+                       inode_num: u64) -> Result<void> {
+    let bitmap_block_idx = inode_num / BITS_PER_BLOCK;
+    let bit_idx = inode_num % BITS_PER_BLOCK;
+    
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    device.read_block(layout.inode_bitmap_start + bitmap_block_idx, &block)?;
+    
+    set_bit(&block, bit_idx);
+    
+    device.write_block(layout.inode_bitmap_start + bitmap_block_idx, &block)?;
+    
+    return Ok(void);
+}
+
+fn mark_block_allocated(device: *BlockDevice, layout: *FilesystemLayout,
+                       block_num: u64) -> Result<void> {
+    let bitmap_block_idx = block_num / BITS_PER_BLOCK;
+    let bit_idx = block_num % BITS_PER_BLOCK;
+    
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    device.read_block(layout.block_bitmap_start + bitmap_block_idx, &block)?;
+    
+    set_bit(&block, bit_idx);
+    
+    device.write_block(layout.block_bitmap_start + bitmap_block_idx, &block)?;
+    
+    return Ok(void);
+}
+
+fn create_dot_entries(block: *u8, self_ino: u64, parent_ino: u64, block_size: u32) {
+    // . entry
+    let dot: DirEntry;
+    dot.inode = self_ino;
+    dot.rec_len = sizeof(DirEntry);
+    dot.name_len = 1;
+    dot.file_type = FileType.Directory;
+    dot.name[0] = '.';
+    dot.name[1] = 0;
+    
+    memory.copy(block, &dot, sizeof(DirEntry));
+    
+    // .. entry
+    let dotdot: DirEntry;
+    dotdot.inode = parent_ino;
+    dotdot.rec_len = block_size - sizeof(DirEntry);
+    dotdot.name_len = 2;
+    dotdot.file_type = FileType.Directory;
+    dotdot.name[0] = '.';
+    dotdot.name[1] = '.';
+    dotdot.name[2] = 0;
+    
+    memory.copy(block + sizeof(DirEntry), &dotdot, sizeof(DirEntry));
+}
+
+fn add_dir_entry_to_root(device: *BlockDevice, layout: *FilesystemLayout,
+                        name: *const u8, inode_num: u64) -> Result<void> {
+    // Read root directory block
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    device.read_block(layout.first_data_block, &block)?;
+    
+    // Find last entry
+    let mut offset: u32 = 0;
+    let mut last_entry: *DirEntry = null;
+    
+    while offset < layout.block_size {
+        let entry = cast<*DirEntry>(&block[offset]);
+        if offset + entry.rec_len >= layout.block_size {
+            last_entry = entry;
+            break;
+        }
+        offset += entry.rec_len;
+    }
+    
+    // Calculate actual size of last entry
+    let actual_size = sizeof(DirEntry) - MAX_NAME_LENGTH + last_entry.name_len + 1;
+    actual_size = (actual_size + 3) & ~3; // Align to 4 bytes
+    
+    // Create new entry
+    let new_entry: DirEntry;
+    new_entry.inode = inode_num;
+    new_entry.rec_len = last_entry.rec_len - actual_size;
+    new_entry.name_len = string.length(name);
+    new_entry.file_type = FileType.Directory;
+    string.copy(new_entry.name, name);
+    
+    // Update last entry
+    last_entry.rec_len = actual_size;
+    
+    // Add new entry
+    memory.copy(&block[offset + actual_size], &new_entry, sizeof(DirEntry));
+    
+    // Write back
+    device.write_block(layout.first_data_block, &block)?;
+    
+    // Update root inode size
+    update_root_inode_size(device, layout, layout.block_size)?;
+    
+    return Ok(void);
+}
+
+fn update_root_inode_size(device: *BlockDevice, layout: *FilesystemLayout,
+                         new_size: u64) -> Result<void> {
+    // This would update the root inode in the B-tree
+    // Simplified for mkfs
+    return Ok(void);
+}
+
+fn finalize_superblock(device: *BlockDevice, sb: *Superblock,
+                      layout: *FilesystemLayout) -> Result<void> {
+    // Update free counts after creating directories
+    sb.free_blocks = layout.free_blocks - 2; // Root and lost+found blocks
+    sb.free_inodes = layout.free_inodes - 2; // Root and lost+found inodes
+    
+    // Recalculate checksum
+    sb.checksum = 0;
+    sb.checksum = calculate_checksum(sb);
+    
+    // Write updated superblock
+    return write_superblock(device, sb);
+}
+
+// Utility functions
+
+fn print_usage(program: *const u8) {
+    io.printf("Usage: %s [options] device\n", program);
+    io.printf("\nOptions:\n");
+    io.printf("  -L, --label LABEL      Set filesystem label\n");
+    io.printf("  -b, --block-size SIZE  Set block size (default: 4096)\n");
+    io.printf("  -j, --journal-size SIZE Set journal size in blocks (default: 8192)\n");
+    io.printf("  -i, --inode-ratio RATIO Bytes per inode (default: 16384)\n");
+    io.printf("  -f, --force            Force creation even if filesystem exists\n");
+    io.printf("  -v, --verbose          Verbose output\n");
+    io.printf("  -h, --help             Show this help message\n");
+}
+
+fn print_error(msg: *const u8, detail: *const u8) {
+    io.fprintf(stderr, "Error: %s%s\n", msg, detail);
+}
+
+fn print_info(msg: *const u8, detail: *const u8) {
+    io.printf("%s%s\n", msg, detail);
+}
+
+fn print_filesystem_info(device: *BlockDevice, device_size: u64, options: *MkfsOptions) {
+    io.printf("\nFilesystem created:\n");
+    io.printf("  Device: %s\n", options.device_path);
+    io.printf("  Size: %llu bytes (%llu MB)\n", device_size, device_size / (1024 * 1024));
+    io.printf("  Block size: %u\n", options.block_size);
+    io.printf("  Journal size: %u blocks\n", options.journal_size);
+    if string.length(options.label) > 0 {
+        io.printf("  Label: %s\n", options.label);
+    }
+}
+
+fn update_progress(progress: *Progress, step: u32, description: *const u8) {
+    progress.current_step = step;
+    string.copy(progress.description, description);
+    
+    let percent = (step * 100) / progress.total_steps;
+    io.printf("\r[%3u%%] %s", percent, description);
+    io.fflush(stdout);
+    
+    if step == progress.total_steps {
+        io.printf("\n");
+    }
+}
+
+fn parse_size(str: *const u8) -> u32 {
+    // Parse size with optional suffix (K, M, G)
+    let len = string.length(str);
+    if len == 0 {
+        return 0;
+    }
+    
+    let multiplier: u64 = 1;
+    let num_str = str;
+    
+    // Check for suffix
+    let last_char = str[len - 1];
+    if last_char == 'K' || last_char == 'k' {
+        multiplier = 1024;
+    } else if last_char == 'M' || last_char == 'm' {
+        multiplier = 1024 * 1024;
+    } else if last_char == 'G' || last_char == 'g' {
+        multiplier = 1024 * 1024 * 1024;
+    }
+    
+    // Parse number
+    let value = string.to_u64(num_str);
+    return (value * multiplier) as u32;
+}
+
+fn is_power_of_two(n: u32) -> bool {
+    return n != 0 && (n & (n - 1)) == 0;
+}
+
+fn has_filesystem(device: *BlockDevice) -> bool {
+    // Check for existing filesystem signatures
+    let block: [u8; DEFAULT_BLOCK_SIZE];
+    
+    if device.read_block(0, &block).is_err() {
+        return false;
+    }
+    
+    // Check for AtomicFS magic
+    let sb = cast<*Superblock>(&block);
+    if sb.magic == MAGIC_NUMBER {
+        return true;
+    }
+    
+    // Could check for other filesystem signatures here
+    
+    return false;
+}
+
+fn set_bit(bitmap: *u8, bit: u64) {
+    let byte_idx = bit / 8;
+    let bit_idx = bit % 8;
+    bitmap[byte_idx] |= (1 << bit_idx);
+}
+
+fn calculate_checksum(data: *void) -> u32 {
+    // Simple checksum for now
+    return crc32(cast<*u8>(data), sizeof(Superblock) - sizeof(u32));
+}
+
+fn calculate_header_checksum(header: *JournalHeader) -> u32 {
+    let saved = header.checksum;
+    header.checksum = 0;
+    let checksum = crc32(cast<*u8>(header), sizeof(JournalHeader));
+    header.checksum = saved;
+    return checksum;
+}
+
+// Constants
+const ROOT_INODE_NUMBER: u64 = 1;
+const MAX_BLOCK_SIZE: u32 = 65536;
+const BITS_PER_BLOCK: u64 = DEFAULT_BLOCK_SIZE * 8;
+const BTREE_MAGIC: u32 = 0x42545245;
+const S_IFDIR: u32 = 0o040000;
+const S_IFREG: u32 = 0o100000;
+
+// Block device abstraction
+struct BlockDevice {
+    fd: i32,
+    size: u64,
+}
+
+fn open_device(path: *const u8) -> *BlockDevice {
+    let fd = open(path, O_RDWR);
+    if fd < 0 {
+        return null;
+    }
+    
+    let device = allocate<BlockDevice>();
+    device.fd = fd;
+    device.size = lseek(fd, 0, SEEK_END);
+    
+    return device;
+}
+
+fn close_device(device: *BlockDevice) {
+    close(device.fd);
+    free(device);
+}
+
+fn get_device_size(device: *BlockDevice) -> u64 {
+    return device.size;
+}
+
+fn sync_device(device: *BlockDevice) -> Result<void> {
+    if fsync(device.fd) < 0 {
+        return Err("Failed to sync device");
+    }
+    return Ok(void);
+}
+
+// Simplified block device read/write
+impl BlockDevice {
+    fn read_block(&self, block_num: u64, buffer: *u8) -> Result<void> {
+        let offset = block_num * DEFAULT_BLOCK_SIZE;
+        if lseek(self.fd, offset, SEEK_SET) != offset {
+            return Err("Seek failed");
+        }
+        
+        if read(self.fd, buffer, DEFAULT_BLOCK_SIZE) != DEFAULT_BLOCK_SIZE {
+            return Err("Read failed");
+        }
+        
+        return Ok(void);
+    }
+    
+    fn write_block(&self, block_num: u64, buffer: *const u8) -> Result<void> {
+        let offset = block_num * DEFAULT_BLOCK_SIZE;
+        if lseek(self.fd, offset, SEEK_SET) != offset {
+            return Err("Seek failed");
+        }
+        
+        if write(self.fd, buffer, DEFAULT_BLOCK_SIZE) != DEFAULT_BLOCK_SIZE {
+            return Err("Write failed");
+        }
+        
+        return Ok(void);
+    }
+}

@@ -1,0 +1,566 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Formal Verification for Hardware Synthesis
+// Ensures hardware and software implementations produce identical results
+
+module hardware_synthesis.verification {
+    use hardware_synthesis.synthesizer
+    use hardware_synthesis.verilog_generator
+    use core.ast
+    use core.types
+    
+    // Verification result
+    struct VerificationResult {
+        equivalence_proven: bool
+        determinism_proven: bool
+        timing_proven: bool
+        counterexamples: [Counterexample]
+        proof_obligations: [ProofObligation]
+        coverage_report: CoverageReport
+        performance_comparison: PerformanceComparison
+    }
+    
+    // Counterexample for failed verification
+    struct Counterexample {
+        input_values: HashMap<string, Value>
+        software_output: Value
+        hardware_output: Value
+        cycle_count: u32
+        divergence_point: SourceLocation
+        trace: ExecutionTrace
+    }
+    
+    // Proof obligation for verification
+    struct ProofObligation {
+        obligation_type: ObligationType
+        condition: LogicalExpression
+        status: ProofStatus
+        proof_method: ProofMethod
+        assumptions: [Assumption]
+    }
+    
+    enum ObligationType {
+        FunctionalEquivalence
+        TimingDeterminism
+        MemoryConsistency
+        NumericPrecision
+        ExceptionBehavior
+        SideEffectFreedom
+    }
+    
+    enum ProofStatus {
+        Proven
+        Disproven(Counterexample)
+        Unknown(string)  // Reason why proof couldn't be completed
+        Timeout
+    }
+    
+    // Formal verification methods
+    enum ProofMethod {
+        SymbolicExecution
+        BoundedModelChecking
+        InductionProof
+        EquivalenceChecking
+        TheoremProving
+        AbstractInterpretation
+    }
+    
+    // Coverage metrics
+    struct CoverageReport {
+        statement_coverage: f32
+        branch_coverage: f32
+        path_coverage: f32
+        state_coverage: f32
+        assertion_coverage: f32
+        corner_cases_tested: u32
+    }
+    
+    // Main verification function
+    func verify_hardware_synthesis(original_func: ast.Function,
+                                 hw_module: synthesizer.HardwareModule,
+                                 config: VerificationConfig) -> VerificationResult {
+        let result = VerificationResult {
+            equivalence_proven: false,
+            determinism_proven: false,
+            timing_proven: false,
+            counterexamples: [],
+            proof_obligations: [],
+            coverage_report: CoverageReport::new(),
+            performance_comparison: PerformanceComparison::new()
+        }
+        
+        // Generate proof obligations
+        result.proof_obligations = generate_proof_obligations(original_func, hw_module)
+        
+        // Verify functional equivalence
+        let equiv_result = verify_functional_equivalence(original_func, hw_module, config)
+        result.equivalence_proven = equiv_result.proven
+        result.counterexamples.extend(equiv_result.counterexamples)
+        
+        // Verify determinism
+        let determ_result = verify_determinism(hw_module, config)
+        result.determinism_proven = determ_result.proven
+        result.counterexamples.extend(determ_result.counterexamples)
+        
+        // Verify timing behavior
+        let timing_result = verify_timing_determinism(hw_module, config)
+        result.timing_proven = timing_result.proven
+        
+        // Generate coverage report
+        result.coverage_report = generate_coverage_report(original_func, hw_module, config)
+        
+        // Compare performance
+        result.performance_comparison = compare_performance(original_func, hw_module)
+        
+        result
+    }
+    
+    // Generate proof obligations
+    func generate_proof_obligations(original: ast.Function,
+                                  hardware: synthesizer.HardwareModule) -> [ProofObligation] {
+        let obligations = []
+        
+        // Functional equivalence obligation
+        obligations.push(ProofObligation {
+            obligation_type: ObligationType.FunctionalEquivalence,
+            condition: generate_equivalence_condition(original, hardware),
+            status: ProofStatus.Unknown("Not yet proven"),
+            proof_method: ProofMethod.EquivalenceChecking,
+            assumptions: extract_assumptions(original)
+        })
+        
+        // Timing determinism obligation
+        obligations.push(ProofObligation {
+            obligation_type: ObligationType.TimingDeterminism,
+            condition: generate_timing_condition(hardware),
+            status: ProofStatus.Unknown("Not yet proven"),
+            proof_method: ProofMethod.BoundedModelChecking,
+            assumptions: []
+        })
+        
+        // Memory consistency obligation
+        if has_memory_operations(original) {
+            obligations.push(ProofObligation {
+                obligation_type: ObligationType.MemoryConsistency,
+                condition: generate_memory_condition(original, hardware),
+                status: ProofStatus.Unknown("Not yet proven"),
+                proof_method: ProofMethod.AbstractInterpretation,
+                assumptions: []
+            })
+        }
+        
+        // Numeric precision obligation
+        if uses_floating_point(original) || uses_fixed_point(original) {
+            obligations.push(ProofObligation {
+                obligation_type: ObligationType.NumericPrecision,
+                condition: generate_precision_condition(original, hardware),
+                status: ProofStatus.Unknown("Not yet proven"),
+                proof_method: ProofMethod.TheoremProving,
+                assumptions: []
+            })
+        }
+        
+        obligations
+    }
+    
+    // Verify functional equivalence
+    func verify_functional_equivalence(original: ast.Function,
+                                     hardware: synthesizer.HardwareModule,
+                                     config: VerificationConfig) -> EquivalenceResult {
+        match config.verification_method {
+            VerificationMethod.Symbolic => {
+                verify_symbolic_equivalence(original, hardware, config)
+            }
+            VerificationMethod.Bounded => {
+                verify_bounded_equivalence(original, hardware, config)
+            }
+            VerificationMethod.Inductive => {
+                verify_inductive_equivalence(original, hardware, config)
+            }
+            VerificationMethod.Compositional => {
+                verify_compositional_equivalence(original, hardware, config)
+            }
+        }
+    }
+    
+    // Symbolic equivalence checking
+    func verify_symbolic_equivalence(original: ast.Function,
+                                   hardware: synthesizer.HardwareModule,
+                                   config: VerificationConfig) -> EquivalenceResult {
+        // Create symbolic execution engines
+        let sw_engine = create_software_symbolic_engine(original)
+        let hw_engine = create_hardware_symbolic_engine(hardware)
+        
+        // Generate symbolic inputs
+        let symbolic_inputs = generate_symbolic_inputs(original.parameters)
+        
+        // Execute both implementations symbolically
+        let sw_result = sw_engine.execute(symbolic_inputs)
+        let hw_result = hw_engine.execute(symbolic_inputs)
+        
+        // Build equivalence formula
+        let equiv_formula = ForAll(symbolic_inputs, 
+                                 Equals(sw_result.output, hw_result.output))
+        
+        // Use SMT solver to verify
+        let solver = create_smt_solver(config.solver_backend)
+        match solver.check_sat(Not(equiv_formula)) {
+            SolverResult.Unsat => {
+                EquivalenceResult {
+                    proven: true,
+                    counterexamples: []
+                }
+            }
+            SolverResult.Sat(model) => {
+                // Extract counterexample
+                let counterexample = extract_counterexample(model, sw_result, hw_result)
+                EquivalenceResult {
+                    proven: false,
+                    counterexamples: [counterexample]
+                }
+            }
+            SolverResult.Unknown => {
+                // Try bounded verification as fallback
+                verify_bounded_equivalence(original, hardware, config)
+            }
+        }
+    }
+    
+    // Bounded model checking
+    func verify_bounded_equivalence(original: ast.Function,
+                                  hardware: synthesizer.HardwareModule,
+                                  config: VerificationConfig) -> EquivalenceResult {
+        let mut proven = true
+        let mut counterexamples = []
+        
+        // Generate test vectors
+        let test_vectors = generate_test_vectors(original, config.bound_depth)
+        
+        for test in test_vectors {
+            // Execute software implementation
+            let sw_output = execute_software(original, test.inputs)
+            
+            // Execute hardware simulation
+            let hw_output = simulate_hardware(hardware, test.inputs, config.max_cycles)
+            
+            // Compare results
+            if !equivalent(sw_output, hw_output, config.tolerance) {
+                proven = false
+                counterexamples.push(Counterexample {
+                    input_values: test.inputs,
+                    software_output: sw_output,
+                    hardware_output: hw_output,
+                    cycle_count: hw_output.cycles,
+                    divergence_point: find_divergence_point(sw_output, hw_output),
+                    trace: generate_trace(test.inputs)
+                })
+                
+                if counterexamples.len() >= config.max_counterexamples {
+                    break
+                }
+            }
+        }
+        
+        EquivalenceResult {
+            proven: proven && config.confidence_level_met(test_vectors.len()),
+            counterexamples: counterexamples
+        }
+    }
+    
+    // Verify determinism properties
+    func verify_determinism(hardware: synthesizer.HardwareModule,
+                          config: VerificationConfig) -> DeterminismResult {
+        let mut proven = true
+        let mut counterexamples = []
+        
+        // Check for non-deterministic sources
+        let non_det_sources = find_non_deterministic_sources(hardware)
+        if non_det_sources.len() > 0 {
+            proven = false
+            for source in non_det_sources {
+                counterexamples.push(create_non_det_counterexample(source))
+            }
+        }
+        
+        // Verify state machine determinism
+        if let Some(fsm) = hardware.control_fsm {
+            let fsm_result = verify_fsm_determinism(fsm)
+            if !fsm_result.deterministic {
+                proven = false
+                counterexamples.extend(fsm_result.counterexamples)
+            }
+        }
+        
+        // Verify datapath determinism
+        let datapath_result = verify_datapath_determinism(hardware.datapath)
+        if !datapath_result.deterministic {
+            proven = false
+            counterexamples.extend(datapath_result.counterexamples)
+        }
+        
+        DeterminismResult {
+            proven: proven,
+            counterexamples: counterexamples
+        }
+    }
+    
+    // Verify timing determinism
+    func verify_timing_determinism(hardware: synthesizer.HardwareModule,
+                                 config: VerificationConfig) -> TimingResult {
+        // Check for variable-latency operations
+        let var_latency_ops = find_variable_latency_operations(hardware)
+        if var_latency_ops.len() > 0 {
+            return TimingResult {
+                proven: false,
+                reason: "Variable latency operations detected",
+                operations: var_latency_ops
+            }
+        }
+        
+        // Verify pipeline determinism
+        if hardware.datapath.pipeline_stages > 0 {
+            let pipeline_result = verify_pipeline_determinism(hardware.datapath)
+            if !pipeline_result.deterministic {
+                return TimingResult {
+                    proven: false,
+                    reason: "Pipeline timing non-deterministic",
+                    operations: pipeline_result.issues
+                }
+            }
+        }
+        
+        // Verify memory access timing
+        let mem_timing = verify_memory_timing(hardware)
+        if !mem_timing.deterministic {
+            return TimingResult {
+                proven: false,
+                reason: "Memory access timing non-deterministic",
+                operations: mem_timing.issues
+            }
+        }
+        
+        TimingResult {
+            proven: true,
+            reason: "All operations have deterministic timing",
+            operations: []
+        }
+    }
+    
+    // Hardware simulation
+    func simulate_hardware(hardware: synthesizer.HardwareModule,
+                         inputs: HashMap<string, Value>,
+                         max_cycles: u32) -> SimulationResult {
+        // Create hardware simulator
+        let simulator = HardwareSimulator::new(hardware)
+        
+        // Initialize inputs
+        for (name, value) in inputs {
+            simulator.set_input(name, value)
+        }
+        
+        // Reset the hardware
+        simulator.reset()
+        
+        // Run simulation
+        let mut cycle = 0
+        let mut outputs = HashMap::new()
+        
+        while !simulator.done() && cycle < max_cycles {
+            simulator.clock_cycle()
+            cycle += 1
+            
+            // Check for outputs
+            if simulator.output_valid() {
+                outputs = simulator.get_outputs()
+                break
+            }
+        }
+        
+        SimulationResult {
+            outputs: outputs,
+            cycles: cycle,
+            done: simulator.done(),
+            trace: simulator.get_trace()
+        }
+    }
+    
+    // Generate test vectors for bounded verification
+    func generate_test_vectors(func: ast.Function, 
+                             bound_depth: u32) -> [TestVector] {
+        let vectors = []
+        
+        // Corner cases
+        vectors.extend(generate_corner_cases(func))
+        
+        // Random testing
+        vectors.extend(generate_random_tests(func, bound_depth))
+        
+        // Directed testing based on code coverage
+        vectors.extend(generate_coverage_tests(func))
+        
+        // Stress testing
+        vectors.extend(generate_stress_tests(func))
+        
+        vectors
+    }
+    
+    // Generate corner case tests
+    func generate_corner_cases(func: ast.Function) -> [TestVector] {
+        let tests = []
+        
+        for param in func.parameters {
+            match param.param_type {
+                types.Type.Integer(int_type) => {
+                    // Min/max values
+                    tests.push(create_test(param.name, int_type.min_value()))
+                    tests.push(create_test(param.name, int_type.max_value()))
+                    tests.push(create_test(param.name, 0))
+                    tests.push(create_test(param.name, 1))
+                    tests.push(create_test(param.name, -1))
+                }
+                types.Type.Float(float_type) => {
+                    // Special float values
+                    tests.push(create_test(param.name, 0.0))
+                    tests.push(create_test(param.name, -0.0))
+                    tests.push(create_test(param.name, float_type.infinity()))
+                    tests.push(create_test(param.name, float_type.neg_infinity()))
+                    tests.push(create_test(param.name, float_type.nan()))
+                    tests.push(create_test(param.name, float_type.min_positive()))
+                    tests.push(create_test(param.name, float_type.max_value()))
+                }
+                types.Type.Array(array_type) => {
+                    // Empty, single element, full
+                    tests.push(create_test(param.name, []))
+                    tests.push(create_test(param.name, [default_value(array_type.element)]))
+                    tests.push(create_test(param.name, generate_full_array(array_type)))
+                }
+                _ => {}
+            }
+        }
+        
+        // Combinations of corner cases
+        tests.extend(generate_corner_combinations(func, tests))
+        
+        tests
+    }
+    
+    // Performance comparison
+    func compare_performance(original: ast.Function,
+                           hardware: synthesizer.HardwareModule) -> PerformanceComparison {
+        // Estimate software performance
+        let sw_perf = estimate_software_performance(original)
+        
+        // Use hardware performance model
+        let hw_perf = hardware.performance_estimates
+        
+        PerformanceComparison {
+            software_cycles: sw_perf.cycles,
+            hardware_cycles: hw_perf.latency_cycles,
+            speedup: sw_perf.cycles as f32 / hw_perf.latency_cycles as f32,
+            power_reduction: 1.0 - (hw_perf.power_consumption / sw_perf.power_estimate),
+            area_overhead: hw_perf.resource_usage,
+            bottlenecks: identify_bottlenecks(original, hardware)
+        }
+    }
+    
+    // Generate RTL assertions for runtime verification
+    func generate_rtl_assertions(hardware: synthesizer.HardwareModule,
+                               verification: VerificationResult) -> string {
+        let mut assertions = ""
+        
+        // Add SystemVerilog assertions
+        assertions += "// Runtime verification assertions\n"
+        
+        // Invariant assertions
+        for invariant in extract_invariants(hardware) {
+            assertions += format!("assert property (@(posedge clk) {});\n", 
+                                invariant.to_rtl())
+        }
+        
+        // Precondition checks
+        for input in hardware.inputs {
+            if let Some(constraint) = input.constraint {
+                assertions += format!("assert property (@(posedge clk) {} |-> {});\n",
+                                    input.valid_signal, constraint.to_rtl())
+            }
+        }
+        
+        // Postcondition checks
+        for output in hardware.outputs {
+            if let Some(constraint) = output.constraint {
+                assertions += format!("assert property (@(posedge clk) {} |-> {});\n",
+                                    output.valid_signal, constraint.to_rtl())
+            }
+        }
+        
+        // Coverage points
+        assertions += "\n// Coverage points\n"
+        for coverage_point in generate_coverage_points(hardware) {
+            assertions += format!("coverpoint {} {{\n", coverage_point.signal)
+            for bin in coverage_point.bins {
+                assertions += format!("    bins {} = {{{}}};\n", bin.name, bin.values)
+            }
+            assertions += "}\n"
+        }
+        
+        assertions
+    }
+    
+    // Generate formal properties for model checking
+    func generate_formal_properties(hardware: synthesizer.HardwareModule) -> [FormalProperty] {
+        let properties = []
+        
+        // Liveness properties
+        properties.push(FormalProperty {
+            name: "eventual_completion",
+            property_type: PropertyType.Liveness,
+            formula: "G (start -> F done)",
+            description: "Computation eventually completes"
+        })
+        
+        // Safety properties
+        properties.push(FormalProperty {
+            name: "no_overflow",
+            property_type: PropertyType.Safety,
+            formula: "G (!overflow)",
+            description: "No arithmetic overflow occurs"
+        })
+        
+        // Determinism properties
+        properties.push(FormalProperty {
+            name: "deterministic_output",
+            property_type: PropertyType.Safety,
+            formula: "G ((inputs == inputs') -> (outputs == outputs'))",
+            description: "Same inputs produce same outputs"
+        })
+        
+        properties
+    }
+}
+
+// Example usage:
+// let verif_config = VerificationConfig {
+//     verification_method: VerificationMethod.Symbolic,
+//     solver_backend: SolverBackend.Z3,
+//     bound_depth: 1000,
+//     max_cycles: 10000,
+//     tolerance: 1e-6,
+//     max_counterexamples: 10,
+//     timeout: 3600  // 1 hour
+// }
+//
+// let result = verify_hardware_synthesis(original_func, hw_module, verif_config)
+// if result.equivalence_proven && result.determinism_proven {
+//     println!("Hardware synthesis verified successfully!")
+// } else {
+//     println!("Verification failed with {} counterexamples", result.counterexamples.len())
+// }

@@ -1,0 +1,416 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Function inlining optimization pass
+// Inline small functions while preserving WCET guarantees
+
+module passes::inline {
+    use mir::{MirProgram, MirFunction, MirInst, BasicBlock};
+    use optimizer::{OptimizationPass, InlineConfig};
+    
+    pub struct InlinePass {
+        config: InlineConfig,
+        inlined_count: u32,
+        call_graph: CallGraph,
+    }
+    
+    // Call graph for tracking function relationships
+    struct CallGraph {
+        nodes: Vec<CallNode>,
+    }
+    
+    struct CallNode {
+        func_id: u32,
+        callers: Vec<u32>,
+        callees: Vec<u32>,
+        size: u32,
+        is_recursive: bool,
+        inline_depth: u32,
+    }
+    
+    impl InlinePass {
+        pub fn new(config: InlineConfig) -> Self {
+            InlinePass {
+                config,
+                inlined_count: 0,
+                call_graph: CallGraph { nodes: Vec::new() },
+            }
+        }
+        
+        // Build call graph from program
+        fn build_call_graph(&mut self, program: &MirProgram) {
+            self.call_graph.nodes.clear();
+            
+            // Create nodes for each function
+            for (i, func) in program.functions.iter().enumerate() {
+                let mut node = CallNode {
+                    func_id: i as u32,
+                    callers: Vec::new(),
+                    callees: Vec::new(),
+                    size: Self::calculate_function_size(func),
+                    is_recursive: false,
+                    inline_depth: 0,
+                };
+                
+                // Find callees
+                for block in &func.blocks {
+                    for inst in &block.instructions {
+                        if let MirInst::Call(_, callee, _) = inst {
+                            if !node.callees.contains(callee) {
+                                node.callees.push(*callee);
+                            }
+                        }
+                    }
+                }
+                
+                self.call_graph.nodes.push(node);
+            }
+            
+            // Build caller relationships
+            for i in 0..self.call_graph.nodes.len() {
+                let callees = self.call_graph.nodes[i].callees.clone();
+                for callee in callees {
+                    if (callee as usize) < self.call_graph.nodes.len() {
+                        self.call_graph.nodes[callee as usize].callers.push(i as u32);
+                    }
+                }
+            }
+            
+            // Detect recursion (simplified - only direct recursion)
+            for node in &mut self.call_graph.nodes {
+                if node.callees.contains(&node.func_id) {
+                    node.is_recursive = true;
+                }
+            }
+        }
+        
+        // Calculate function size for inlining decisions
+        fn calculate_function_size(func: &MirFunction) -> u32 {
+            let mut size = 0u32;
+            for block in &func.blocks {
+                size = size.saturating_add(block.instructions.len() as u32);
+            }
+            size
+        }
+        
+        // Check if a function should be inlined
+        fn should_inline(&self, func_id: u32, call_site_depth: u32) -> bool {
+            if let Some(node) = self.call_graph.nodes.get(func_id as usize) {
+                // Don't inline recursive functions
+                if node.is_recursive {
+                    return false;
+                }
+                
+                // Check size limit
+                if node.size > self.config.max_size {
+                    return false;
+                }
+                
+                // Check depth limit
+                if call_site_depth >= self.config.max_depth {
+                    return false;
+                }
+                
+                // Don't inline functions with too many call sites (code bloat)
+                if node.callers.len() > 5 && node.size > 10 {
+                    return false;
+                }
+                
+                true
+            } else {
+                false
+            }
+        }
+        
+        // Clone and transform a function for inlining
+        fn clone_function_body(
+            &self,
+            func: &MirFunction,
+            reg_offset: u32,
+            block_offset: u32,
+            return_reg: u32,
+            return_block: u32,
+            args: &[u32]
+        ) -> (Vec<BasicBlock>, u32) {
+            let mut new_blocks = Vec::new();
+            let mut max_reg = reg_offset;
+            
+            // Map old register numbers to new ones
+            let mut reg_map = vec![0u32; func.locals.len()];
+            
+            // Map parameters to arguments
+            for (i, &arg) in args.iter().enumerate() {
+                if i < func.params.len() {
+                    reg_map[i] = arg;
+                }
+            }
+            
+            // Allocate new registers for locals
+            for i in func.params.len()..func.locals.len() {
+                reg_map[i] = max_reg;
+                max_reg += 1;
+            }
+            
+            // Clone and transform each block
+            for block in &func.blocks {
+                let mut new_block = BasicBlock {
+                    id: block.id + block_offset,
+                    instructions: Vec::new(),
+                    predecessors: block.predecessors.iter().map(|&p| p + block_offset).collect(),
+                    successors: block.successors.iter().map(|&s| s + block_offset).collect(),
+                    wcet_cycles: block.wcet_cycles,
+                    loop_bound: block.loop_bound,
+                };
+                
+                // Transform instructions
+                for inst in &block.instructions {
+                    let new_inst = self.transform_instruction(
+                        inst,
+                        &reg_map,
+                        block_offset,
+                        return_reg,
+                        return_block
+                    );
+                    new_block.instructions.push(new_inst);
+                }
+                
+                new_blocks.push(new_block);
+            }
+            
+            (new_blocks, max_reg)
+        }
+        
+        // Transform an instruction for inlining
+        fn transform_instruction(
+            &self,
+            inst: &MirInst,
+            reg_map: &[u32],
+            block_offset: u32,
+            return_reg: u32,
+            return_block: u32
+        ) -> MirInst {
+            let map_reg = |r: u32| -> u32 {
+                if (r as usize) < reg_map.len() {
+                    reg_map[r as usize]
+                } else {
+                    r
+                }
+            };
+            
+            match inst {
+                MirInst::LoadConst(dst, value) => {
+                    MirInst::LoadConst(map_reg(*dst), *value)
+                },
+                MirInst::Move(dst, src) => {
+                    MirInst::Move(map_reg(*dst), map_reg(*src))
+                },
+                MirInst::Add(dst, src1, src2) => {
+                    MirInst::Add(map_reg(*dst), map_reg(*src1), map_reg(*src2))
+                },
+                MirInst::Sub(dst, src1, src2) => {
+                    MirInst::Sub(map_reg(*dst), map_reg(*src1), map_reg(*src2))
+                },
+                MirInst::Mul(dst, src1, src2) => {
+                    MirInst::Mul(map_reg(*dst), map_reg(*src1), map_reg(*src2))
+                },
+                MirInst::Div(dst, src1, src2) => {
+                    MirInst::Div(map_reg(*dst), map_reg(*src1), map_reg(*src2))
+                },
+                MirInst::Mod(dst, src1, src2) => {
+                    MirInst::Mod(map_reg(*dst), map_reg(*src1), map_reg(*src2))
+                },
+                MirInst::Jump(block) => {
+                    MirInst::Jump(*block + block_offset)
+                },
+                MirInst::JumpIf(cond, true_b, false_b) => {
+                    MirInst::JumpIf(
+                        map_reg(*cond),
+                        *true_b + block_offset,
+                        *false_b + block_offset
+                    )
+                },
+                MirInst::Return(Some(value)) => {
+                    // Transform return into assignment and jump
+                    MirInst::Move(return_reg, map_reg(*value))
+                },
+                MirInst::Return(None) => {
+                    // Transform return into jump
+                    MirInst::Jump(return_block)
+                },
+                // Handle other instructions similarly...
+                _ => inst.clone(), // Simplified - would need full transformation
+            }
+        }
+        
+        // Inline a function call
+        fn inline_call(
+            &mut self,
+            caller: &mut MirFunction,
+            block_idx: usize,
+            inst_idx: usize,
+            callee: &MirFunction,
+            dst_reg: u32,
+            args: &[u32]
+        ) -> bool {
+            // Get current register and block offsets
+            let reg_offset = caller.locals.len() as u32;
+            let block_offset = caller.blocks.len() as u32;
+            
+            // Create return block
+            let return_block_id = block_offset + callee.blocks.len() as u32;
+            let mut return_block = BasicBlock {
+                id: return_block_id,
+                instructions: Vec::new(),
+                predecessors: Vec::new(),
+                successors: vec![caller.blocks[block_idx].successors[0]], // Simplified
+                wcet_cycles: 1,
+                loop_bound: None,
+            };
+            
+            // Clone callee body
+            let (mut inlined_blocks, new_max_reg) = self.clone_function_body(
+                callee,
+                reg_offset,
+                block_offset,
+                dst_reg,
+                return_block_id,
+                args
+            );
+            
+            // Update caller's locals
+            for _ in caller.locals.len()..new_max_reg as usize {
+                caller.locals.push(mir::MirType::I64); // Simplified type
+            }
+            
+            // Split the current block at the call site
+            let current_block = &mut caller.blocks[block_idx];
+            let mut post_call_instructions = current_block.instructions.split_off(inst_idx + 1);
+            current_block.instructions.pop(); // Remove the call instruction
+            
+            // Add jump to the inlined function
+            current_block.instructions.push(MirInst::Jump(block_offset));
+            current_block.successors = vec![block_offset];
+            
+            // Move post-call instructions to return block
+            return_block.instructions.append(&mut post_call_instructions);
+            
+            // Update CFG connections
+            if let Some(entry_block) = inlined_blocks.get_mut(0) {
+                entry_block.predecessors.push(current_block.id);
+            }
+            
+            // Add all new blocks
+            caller.blocks.append(&mut inlined_blocks);
+            caller.blocks.push(return_block);
+            
+            // Update WCET if needed
+            if self.config.preserve_wcet {
+                if let (Some(caller_wcet), Some(callee_wcet)) = 
+                    (caller.wcet_bound, callee.wcet_bound) {
+                    // Conservative WCET update
+                    caller.wcet_bound = Some(caller_wcet.saturating_add(callee_wcet));
+                }
+            }
+            
+            self.inlined_count += 1;
+            true
+        }
+        
+        // Find inline candidates in a function
+        fn find_inline_candidates(
+            &self,
+            func: &MirFunction,
+            depth: u32
+        ) -> Vec<(usize, usize, u32, Vec<u32>)> {
+            let mut candidates = Vec::new();
+            
+            for (block_idx, block) in func.blocks.iter().enumerate() {
+                for (inst_idx, inst) in block.instructions.iter().enumerate() {
+                    if let MirInst::Call(dst, callee, args) = inst {
+                        if self.should_inline(*callee, depth) {
+                            candidates.push((block_idx, inst_idx, *dst, args.clone()));
+                        }
+                    }
+                }
+            }
+            
+            candidates
+        }
+    }
+    
+    impl OptimizationPass for InlinePass {
+        fn name(&self) -> &str {
+            "function-inlining"
+        }
+        
+        fn run_on_program(&mut self, program: &mut MirProgram) -> bool {
+            self.inlined_count = 0;
+            
+            // Build call graph
+            self.build_call_graph(program);
+            
+            // Process functions in reverse topological order (callees before callers)
+            // This ensures we inline leaf functions first
+            let mut changed = false;
+            let mut processed = vec![false; program.functions.len()];
+            
+            // Simple topological sort (bounded by number of functions)
+            for _ in 0..program.functions.len() {
+                for i in 0..program.functions.len() {
+                    if processed[i] {
+                        continue;
+                    }
+                    
+                    // Check if all callees have been processed
+                    let node = &self.call_graph.nodes[i];
+                    let ready = node.callees.iter().all(|&c| {
+                        c as usize >= program.functions.len() || processed[c as usize]
+                    });
+                    
+                    if ready {
+                        // Process this function
+                        let candidates = self.find_inline_candidates(&program.functions[i], 0);
+                        
+                        // Inline calls (in reverse order to maintain indices)
+                        for (block_idx, inst_idx, dst, args) in candidates.into_iter().rev() {
+                            if let Some(callee) = program.functions.get(args[0] as usize) {
+                                let callee_clone = callee.clone();
+                                if self.inline_call(
+                                    &mut program.functions[i],
+                                    block_idx,
+                                    inst_idx,
+                                    &callee_clone,
+                                    dst,
+                                    &args[1..]
+                                ) {
+                                    changed = true;
+                                }
+                            }
+                        }
+                        
+                        processed[i] = true;
+                    }
+                }
+            }
+            
+            changed
+        }
+        
+        fn run_on_function(&mut self, func: &mut MirFunction) -> bool {
+            // Inlining requires whole-program analysis
+            false
+        }
+        
+        fn preserves_wcet(&self) -> bool {
+            self.config.preserve_wcet
+        }
+    }
+}

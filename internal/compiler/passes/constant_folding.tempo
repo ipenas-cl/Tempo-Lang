@@ -1,0 +1,348 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Constant folding optimization pass
+// Evaluates compile-time constants while preserving WCET guarantees
+
+module passes::constant_folding {
+    use mir::{MirFunction, MirInst, BasicBlock, MirValue};
+    use optimizer::OptimizationPass;
+    
+    pub struct ConstantFoldingPass {
+        constants: Vec<Option<MirValue>>, // Tracked constant values
+        folded_count: u32,
+    }
+    
+    impl ConstantFoldingPass {
+        pub fn new() -> Self {
+            ConstantFoldingPass {
+                constants: Vec::new(),
+                folded_count: 0,
+            }
+        }
+        
+        // Evaluate binary operation on constants
+        fn eval_binop(
+            op: fn(i64, i64) -> Option<i64>,
+            v1: &MirValue,
+            v2: &MirValue
+        ) -> MirValue {
+            match (v1, v2) {
+                (MirValue::Const(a), MirValue::Const(b)) => {
+                    if let Some(result) = op(*a, *b) {
+                        MirValue::Const(result)
+                    } else {
+                        MirValue::Unknown // Overflow or division by zero
+                    }
+                },
+                _ => MirValue::Unknown,
+            }
+        }
+        
+        // Evaluate unary operation on constants
+        fn eval_unop(
+            op: fn(i64) -> i64,
+            v: &MirValue
+        ) -> MirValue {
+            match v {
+                MirValue::Const(a) => MirValue::Const(op(*a)),
+                _ => MirValue::Unknown,
+            }
+        }
+        
+        // Safe arithmetic operations that check for overflow
+        fn safe_add(a: i64, b: i64) -> Option<i64> {
+            a.checked_add(b)
+        }
+        
+        fn safe_sub(a: i64, b: i64) -> Option<i64> {
+            a.checked_sub(b)
+        }
+        
+        fn safe_mul(a: i64, b: i64) -> Option<i64> {
+            a.checked_mul(b)
+        }
+        
+        fn safe_div(a: i64, b: i64) -> Option<i64> {
+            if b != 0 {
+                a.checked_div(b)
+            } else {
+                None
+            }
+        }
+        
+        fn safe_mod(a: i64, b: i64) -> Option<i64> {
+            if b != 0 {
+                a.checked_rem(b)
+            } else {
+                None
+            }
+        }
+        
+        // Process a single instruction
+        fn process_instruction(&mut self, inst: &mut MirInst) -> bool {
+            match inst {
+                MirInst::LoadConst(dst, value) => {
+                    // Track constant value
+                    if *dst as usize >= self.constants.len() {
+                        self.constants.resize(*dst as usize + 1, None);
+                    }
+                    self.constants[*dst as usize] = Some(MirValue::Const(*value));
+                    false
+                },
+                
+                MirInst::Move(dst, src) => {
+                    // Propagate constant value
+                    if let Some(Some(value)) = self.constants.get(*src as usize) {
+                        if *dst as usize >= self.constants.len() {
+                            self.constants.resize(*dst as usize + 1, None);
+                        }
+                        self.constants[*dst as usize] = Some(value.clone());
+                    }
+                    false
+                },
+                
+                MirInst::Add(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, Self::safe_add, inst)
+                },
+                
+                MirInst::Sub(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, Self::safe_sub, inst)
+                },
+                
+                MirInst::Mul(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, Self::safe_mul, inst)
+                },
+                
+                MirInst::Div(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, Self::safe_div, inst)
+                },
+                
+                MirInst::Mod(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, Self::safe_mod, inst)
+                },
+                
+                MirInst::And(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, |a, b| Some(a & b), inst)
+                },
+                
+                MirInst::Or(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, |a, b| Some(a | b), inst)
+                },
+                
+                MirInst::Xor(dst, src1, src2) => {
+                    self.try_fold_binop(dst, src1, src2, |a, b| Some(a ^ b), inst)
+                },
+                
+                MirInst::Not(dst, src) => {
+                    self.try_fold_unop(dst, src, |a| !a, inst)
+                },
+                
+                MirInst::Eq(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a == b, inst)
+                },
+                
+                MirInst::Ne(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a != b, inst)
+                },
+                
+                MirInst::Lt(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a < b, inst)
+                },
+                
+                MirInst::Le(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a <= b, inst)
+                },
+                
+                MirInst::Gt(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a > b, inst)
+                },
+                
+                MirInst::Ge(dst, src1, src2) => {
+                    self.try_fold_comparison(dst, src1, src2, |a, b| a >= b, inst)
+                },
+                
+                // Instructions that invalidate constant tracking
+                MirInst::Call(dst, _, _) |
+                MirInst::Load(dst, _, _) |
+                MirInst::Pop(dst) |
+                MirInst::GetTime(dst) => {
+                    if *dst as usize < self.constants.len() {
+                        self.constants[*dst as usize] = Some(MirValue::Unknown);
+                    }
+                    false
+                },
+                
+                _ => false,
+            }
+        }
+        
+        // Try to fold a binary operation
+        fn try_fold_binop(
+            &mut self,
+            dst: &u32,
+            src1: &u32,
+            src2: &u32,
+            op: fn(i64, i64) -> Option<i64>,
+            inst: &mut MirInst
+        ) -> bool {
+            if let (Some(Some(v1)), Some(Some(v2))) = 
+                (self.constants.get(*src1 as usize), self.constants.get(*src2 as usize)) {
+                
+                let result = Self::eval_binop(op, v1, v2);
+                
+                if let MirValue::Const(value) = result {
+                    // Replace with constant load
+                    *inst = MirInst::LoadConst(*dst, value);
+                    
+                    // Track the constant
+                    if *dst as usize >= self.constants.len() {
+                        self.constants.resize(*dst as usize + 1, None);
+                    }
+                    self.constants[*dst as usize] = Some(result);
+                    
+                    self.folded_count += 1;
+                    return true;
+                }
+            }
+            
+            // Not constant, mark destination as unknown
+            if *dst as usize >= self.constants.len() {
+                self.constants.resize(*dst as usize + 1, None);
+            }
+            self.constants[*dst as usize] = Some(MirValue::Unknown);
+            false
+        }
+        
+        // Try to fold a unary operation
+        fn try_fold_unop(
+            &mut self,
+            dst: &u32,
+            src: &u32,
+            op: fn(i64) -> i64,
+            inst: &mut MirInst
+        ) -> bool {
+            if let Some(Some(v)) = self.constants.get(*src as usize) {
+                let result = Self::eval_unop(op, v);
+                
+                if let MirValue::Const(value) = result {
+                    // Replace with constant load
+                    *inst = MirInst::LoadConst(*dst, value);
+                    
+                    // Track the constant
+                    if *dst as usize >= self.constants.len() {
+                        self.constants.resize(*dst as usize + 1, None);
+                    }
+                    self.constants[*dst as usize] = Some(result);
+                    
+                    self.folded_count += 1;
+                    return true;
+                }
+            }
+            
+            // Not constant, mark destination as unknown
+            if *dst as usize >= self.constants.len() {
+                self.constants.resize(*dst as usize + 1, None);
+            }
+            self.constants[*dst as usize] = Some(MirValue::Unknown);
+            false
+        }
+        
+        // Try to fold a comparison
+        fn try_fold_comparison(
+            &mut self,
+            dst: &u32,
+            src1: &u32,
+            src2: &u32,
+            op: fn(i64, i64) -> bool,
+            inst: &mut MirInst
+        ) -> bool {
+            if let (Some(Some(MirValue::Const(v1))), Some(Some(MirValue::Const(v2)))) = 
+                (self.constants.get(*src1 as usize), self.constants.get(*src2 as usize)) {
+                
+                let result = if op(*v1, *v2) { 1 } else { 0 };
+                
+                // Replace with constant load
+                *inst = MirInst::LoadConst(*dst, result);
+                
+                // Track the constant
+                if *dst as usize >= self.constants.len() {
+                    self.constants.resize(*dst as usize + 1, None);
+                }
+                self.constants[*dst as usize] = Some(MirValue::Const(result));
+                
+                self.folded_count += 1;
+                return true;
+            }
+            
+            // Not constant, mark destination as unknown
+            if *dst as usize >= self.constants.len() {
+                self.constants.resize(*dst as usize + 1, None);
+            }
+            self.constants[*dst as usize] = Some(MirValue::Unknown);
+            false
+        }
+        
+        // Check if a register holds a known constant
+        fn is_constant(&self, reg: u32) -> Option<i64> {
+            if let Some(Some(MirValue::Const(value))) = self.constants.get(reg as usize) {
+                Some(*value)
+            } else {
+                None
+            }
+        }
+    }
+    
+    impl OptimizationPass for ConstantFoldingPass {
+        fn name(&self) -> &str {
+            "constant-folding"
+        }
+        
+        fn run_on_function(&mut self, func: &mut MirFunction) -> bool {
+            self.constants.clear();
+            self.folded_count = 0;
+            
+            // Process each block
+            for block in &mut func.blocks {
+                for inst in &mut block.instructions {
+                    self.process_instruction(inst);
+                }
+            }
+            
+            // Simplify control flow based on constant conditions
+            let mut cfg_changed = false;
+            for block in &mut func.blocks {
+                if let Some(last) = block.instructions.last_mut() {
+                    match last {
+                        MirInst::JumpIf(cond, true_block, false_block) => {
+                            if let Some(value) = self.is_constant(*cond) {
+                                // Replace conditional jump with unconditional
+                                *last = if value != 0 {
+                                    MirInst::Jump(*true_block)
+                                } else {
+                                    MirInst::Jump(*false_block)
+                                };
+                                cfg_changed = true;
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            }
+            
+            self.folded_count > 0 || cfg_changed
+        }
+        
+        fn preserves_wcet(&self) -> bool {
+            true // Constant folding always reduces or maintains execution time
+        }
+    }
+}

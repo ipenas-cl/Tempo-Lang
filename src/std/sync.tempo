@@ -1,0 +1,681 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// std/sync.tempo - Deterministic synchronization primitives
+// Provides thread-safe synchronization with bounded wait times
+
+module std::sync
+
+// Mutex - mutual exclusion lock
+struct Mutex<T> {
+    locked: atomic<bool>
+    value: T
+}
+
+// RwLock - reader-writer lock
+struct RwLock<T> {
+    readers: atomic<u32>
+    writer: atomic<bool>
+    value: T
+}
+
+// Semaphore - counting semaphore
+struct Semaphore {
+    count: atomic<i32>
+    max_count: u32
+}
+
+// Channel - bounded message channel
+struct Channel<T> {
+    buffer: Vec<T>
+    capacity: usize
+    read_pos: atomic<usize>
+    write_pos: atomic<usize>
+    closed: atomic<bool>
+}
+
+// WaitGroup - synchronization point for multiple operations
+struct WaitGroup {
+    count: atomic<i32>
+}
+
+// Barrier - synchronization point for fixed number of threads
+struct Barrier {
+    n: u32
+    count: atomic<u32>
+    generation: atomic<u64>
+}
+
+// Once - ensures a function is called only once
+struct Once {
+    done: atomic<bool>
+}
+
+// Error types
+enum SyncError {
+    WouldBlock
+    Timeout
+    Poisoned
+    ChannelClosed
+    InvalidArgument
+}
+
+type Result<T> = union { Ok(T), Err(SyncError) }
+
+// Lock guard for automatic unlock
+struct MutexGuard<T> {
+    mutex: &Mutex<T>
+}
+
+struct RwLockReadGuard<T> {
+    lock: &RwLock<T>
+}
+
+struct RwLockWriteGuard<T> {
+    lock: &RwLock<T>
+}
+
+// Constants
+const MAX_SPIN_COUNT: u32 = 100
+const BACKOFF_INITIAL: u32 = 1
+const BACKOFF_MAX: u32 = 64
+
+// Mutex implementation
+fn mutex_new<T>(value: T) -> Mutex<T> {
+    return Mutex {
+        locked: atomic_new(false),
+        value: value
+    }
+}
+
+fn mutex_lock<T>(m: &Mutex<T>) -> MutexGuard<T> {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        // Try to acquire lock
+        if atomic_compare_exchange(&m.locked, false, true) {
+            // Memory fence to ensure all subsequent reads see latest data
+            @memory_fence_acquire()
+            return MutexGuard { mutex: m }
+        }
+        
+        // Spin with exponential backoff
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            // Yield to scheduler after spinning
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+}
+
+fn mutex_try_lock<T>(m: &Mutex<T>) -> Result<MutexGuard<T>> {
+    if atomic_compare_exchange(&m.locked, false, true) {
+        @memory_fence_acquire()
+        return Ok(MutexGuard { mutex: m })
+    }
+    return Err(SyncError::WouldBlock)
+}
+
+fn mutex_lock_timeout<T>(m: &Mutex<T>, timeout_ms: u32) -> Result<MutexGuard<T>> {
+    let deadline = time::add(time::now(), time::duration_from_millis(timeout_ms as u64))
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        // Try to acquire lock
+        if atomic_compare_exchange(&m.locked, false, true) {
+            @memory_fence_acquire()
+            return Ok(MutexGuard { mutex: m })
+        }
+        
+        // Check timeout
+        if time::after(time::now(), deadline) {
+            return Err(SyncError::Timeout)
+        }
+        
+        // Spin with backoff
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+}
+
+fn mutex_unlock<T>(guard: MutexGuard<T>) {
+    // Memory fence to ensure all writes are visible
+    @memory_fence_release()
+    atomic_store(&guard.mutex.locked, false)
+}
+
+fn mutex_guard_get<T>(guard: &MutexGuard<T>) -> &T {
+    return &guard.mutex.value
+}
+
+fn mutex_guard_get_mut<T>(guard: &mut MutexGuard<T>) -> &mut T {
+    return &mut guard.mutex.value
+}
+
+// RwLock implementation
+fn rwlock_new<T>(value: T) -> RwLock<T> {
+    return RwLock {
+        readers: atomic_new(0),
+        writer: atomic_new(false),
+        value: value
+    }
+}
+
+fn rwlock_read<T>(lock: &RwLock<T>) -> RwLockReadGuard<T> {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        // Wait for writer to finish
+        while atomic_load(&lock.writer) {
+            spin_count += 1
+            if spin_count < MAX_SPIN_COUNT {
+                for _ in 0..backoff {
+                    @cpu_pause()
+                }
+                backoff = min(backoff * 2, BACKOFF_MAX)
+            } else {
+                @thread_yield()
+                spin_count = 0
+                backoff = BACKOFF_INITIAL
+            }
+        }
+        
+        // Increment reader count
+        atomic_fetch_add(&lock.readers, 1)
+        
+        // Check if writer grabbed lock while we were incrementing
+        if !atomic_load(&lock.writer) {
+            @memory_fence_acquire()
+            return RwLockReadGuard { lock: lock }
+        }
+        
+        // Writer got in, back out and retry
+        atomic_fetch_sub(&lock.readers, 1)
+    }
+}
+
+fn rwlock_try_read<T>(lock: &RwLock<T>) -> Result<RwLockReadGuard<T>> {
+    if atomic_load(&lock.writer) {
+        return Err(SyncError::WouldBlock)
+    }
+    
+    atomic_fetch_add(&lock.readers, 1)
+    
+    if !atomic_load(&lock.writer) {
+        @memory_fence_acquire()
+        return Ok(RwLockReadGuard { lock: lock })
+    }
+    
+    atomic_fetch_sub(&lock.readers, 1)
+    return Err(SyncError::WouldBlock)
+}
+
+fn rwlock_write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<T> {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    // First acquire writer lock
+    while !atomic_compare_exchange(&lock.writer, false, true) {
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+    
+    // Wait for all readers to finish
+    spin_count = 0
+    backoff = BACKOFF_INITIAL
+    
+    while atomic_load(&lock.readers) > 0 {
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+    
+    @memory_fence_acquire()
+    return RwLockWriteGuard { lock: lock }
+}
+
+fn rwlock_try_write<T>(lock: &RwLock<T>) -> Result<RwLockWriteGuard<T>> {
+    if !atomic_compare_exchange(&lock.writer, false, true) {
+        return Err(SyncError::WouldBlock)
+    }
+    
+    if atomic_load(&lock.readers) > 0 {
+        atomic_store(&lock.writer, false)
+        return Err(SyncError::WouldBlock)
+    }
+    
+    @memory_fence_acquire()
+    return Ok(RwLockWriteGuard { lock: lock })
+}
+
+fn rwlock_read_unlock<T>(guard: RwLockReadGuard<T>) {
+    @memory_fence_release()
+    atomic_fetch_sub(&guard.lock.readers, 1)
+}
+
+fn rwlock_write_unlock<T>(guard: RwLockWriteGuard<T>) {
+    @memory_fence_release()
+    atomic_store(&guard.lock.writer, false)
+}
+
+fn rwlock_read_guard_get<T>(guard: &RwLockReadGuard<T>) -> &T {
+    return &guard.lock.value
+}
+
+fn rwlock_write_guard_get<T>(guard: &RwLockWriteGuard<T>) -> &T {
+    return &guard.lock.value
+}
+
+fn rwlock_write_guard_get_mut<T>(guard: &mut RwLockWriteGuard<T>) -> &mut T {
+    return &mut guard.lock.value
+}
+
+// Semaphore implementation
+fn semaphore_new(initial: u32, max: u32) -> Result<Semaphore> {
+    if initial > max {
+        return Err(SyncError::InvalidArgument)
+    }
+    
+    return Ok(Semaphore {
+        count: atomic_new(initial as i32),
+        max_count: max
+    })
+}
+
+fn semaphore_acquire(sem: &Semaphore) {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        let current = atomic_load(&sem.count)
+        if current > 0 {
+            if atomic_compare_exchange(&sem.count, current, current - 1) {
+                @memory_fence_acquire()
+                return
+            }
+        }
+        
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+}
+
+fn semaphore_try_acquire(sem: &Semaphore) -> Result<()> {
+    let current = atomic_load(&sem.count)
+    if current > 0 {
+        if atomic_compare_exchange(&sem.count, current, current - 1) {
+            @memory_fence_acquire()
+            return Ok(())
+        }
+    }
+    return Err(SyncError::WouldBlock)
+}
+
+fn semaphore_release(sem: &Semaphore) -> Result<()> {
+    @memory_fence_release()
+    
+    loop {
+        let current = atomic_load(&sem.count)
+        if current >= sem.max_count as i32 {
+            return Err(SyncError::InvalidArgument)
+        }
+        
+        if atomic_compare_exchange(&sem.count, current, current + 1) {
+            return Ok(())
+        }
+    }
+}
+
+// Channel implementation
+fn channel_new<T>(capacity: usize) -> Channel<T> {
+    return Channel {
+        buffer: vec![],
+        capacity: capacity,
+        read_pos: atomic_new(0),
+        write_pos: atomic_new(0),
+        closed: atomic_new(false)
+    }
+}
+
+fn channel_send<T>(ch: &Channel<T>, value: T) -> Result<()> {
+    if atomic_load(&ch.closed) {
+        return Err(SyncError::ChannelClosed)
+    }
+    
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        let read = atomic_load(&ch.read_pos)
+        let write = atomic_load(&ch.write_pos)
+        let next_write = (write + 1) % ch.capacity
+        
+        // Check if buffer is full
+        if next_write == read {
+            if atomic_load(&ch.closed) {
+                return Err(SyncError::ChannelClosed)
+            }
+            
+            spin_count += 1
+            if spin_count < MAX_SPIN_COUNT {
+                for _ in 0..backoff {
+                    @cpu_pause()
+                }
+                backoff = min(backoff * 2, BACKOFF_MAX)
+            } else {
+                @thread_yield()
+                spin_count = 0
+                backoff = BACKOFF_INITIAL
+            }
+            continue
+        }
+        
+        // Try to claim the write slot
+        if atomic_compare_exchange(&ch.write_pos, write, next_write) {
+            ch.buffer[write] = value
+            @memory_fence_release()
+            return Ok(())
+        }
+    }
+}
+
+fn channel_try_send<T>(ch: &Channel<T>, value: T) -> Result<()> {
+    if atomic_load(&ch.closed) {
+        return Err(SyncError::ChannelClosed)
+    }
+    
+    let read = atomic_load(&ch.read_pos)
+    let write = atomic_load(&ch.write_pos)
+    let next_write = (write + 1) % ch.capacity
+    
+    if next_write == read {
+        return Err(SyncError::WouldBlock)
+    }
+    
+    if atomic_compare_exchange(&ch.write_pos, write, next_write) {
+        ch.buffer[write] = value
+        @memory_fence_release()
+        return Ok(())
+    }
+    
+    return Err(SyncError::WouldBlock)
+}
+
+fn channel_recv<T>(ch: &Channel<T>) -> Result<T> {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    loop {
+        let read = atomic_load(&ch.read_pos)
+        let write = atomic_load(&ch.write_pos)
+        
+        // Check if buffer is empty
+        if read == write {
+            if atomic_load(&ch.closed) {
+                return Err(SyncError::ChannelClosed)
+            }
+            
+            spin_count += 1
+            if spin_count < MAX_SPIN_COUNT {
+                for _ in 0..backoff {
+                    @cpu_pause()
+                }
+                backoff = min(backoff * 2, BACKOFF_MAX)
+            } else {
+                @thread_yield()
+                spin_count = 0
+                backoff = BACKOFF_INITIAL
+            }
+            continue
+        }
+        
+        // Try to claim the read slot
+        let next_read = (read + 1) % ch.capacity
+        if atomic_compare_exchange(&ch.read_pos, read, next_read) {
+            @memory_fence_acquire()
+            return Ok(ch.buffer[read])
+        }
+    }
+}
+
+fn channel_try_recv<T>(ch: &Channel<T>) -> Result<T> {
+    let read = atomic_load(&ch.read_pos)
+    let write = atomic_load(&ch.write_pos)
+    
+    if read == write {
+        if atomic_load(&ch.closed) {
+            return Err(SyncError::ChannelClosed)
+        }
+        return Err(SyncError::WouldBlock)
+    }
+    
+    let next_read = (read + 1) % ch.capacity
+    if atomic_compare_exchange(&ch.read_pos, read, next_read) {
+        @memory_fence_acquire()
+        return Ok(ch.buffer[read])
+    }
+    
+    return Err(SyncError::WouldBlock)
+}
+
+fn channel_close<T>(ch: &Channel<T>) {
+    atomic_store(&ch.closed, true)
+}
+
+fn channel_is_closed<T>(ch: &Channel<T>) -> bool {
+    return atomic_load(&ch.closed)
+}
+
+// WaitGroup implementation
+fn waitgroup_new() -> WaitGroup {
+    return WaitGroup {
+        count: atomic_new(0)
+    }
+}
+
+fn waitgroup_add(wg: &WaitGroup, delta: i32) {
+    atomic_fetch_add(&wg.count, delta)
+}
+
+fn waitgroup_done(wg: &WaitGroup) {
+    waitgroup_add(wg, -1)
+}
+
+fn waitgroup_wait(wg: &WaitGroup) {
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    while atomic_load(&wg.count) > 0 {
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+    
+    @memory_fence_acquire()
+}
+
+// Barrier implementation
+fn barrier_new(n: u32) -> Result<Barrier> {
+    if n == 0 {
+        return Err(SyncError::InvalidArgument)
+    }
+    
+    return Ok(Barrier {
+        n: n,
+        count: atomic_new(0),
+        generation: atomic_new(0)
+    })
+}
+
+fn barrier_wait(b: &Barrier) -> bool {
+    let gen = atomic_load(&b.generation)
+    let count = atomic_fetch_add(&b.count, 1) + 1
+    
+    if count == b.n {
+        // Last thread to arrive
+        atomic_store(&b.count, 0)
+        atomic_fetch_add(&b.generation, 1)
+        @memory_fence_release()
+        return true
+    }
+    
+    // Wait for generation to change
+    let mut spin_count = 0
+    let mut backoff = BACKOFF_INITIAL
+    
+    while atomic_load(&b.generation) == gen {
+        spin_count += 1
+        if spin_count < MAX_SPIN_COUNT {
+            for _ in 0..backoff {
+                @cpu_pause()
+            }
+            backoff = min(backoff * 2, BACKOFF_MAX)
+        } else {
+            @thread_yield()
+            spin_count = 0
+            backoff = BACKOFF_INITIAL
+        }
+    }
+    
+    @memory_fence_acquire()
+    return false
+}
+
+// Once implementation
+fn once_new() -> Once {
+    return Once {
+        done: atomic_new(false)
+    }
+}
+
+fn once_do(o: &Once, f: fn()) {
+    if atomic_load(&o.done) {
+        @memory_fence_acquire()
+        return
+    }
+    
+    // Try to be the one to execute
+    if atomic_compare_exchange(&o.done, false, true) {
+        f()
+        @memory_fence_release()
+    } else {
+        // Someone else is executing, wait for them
+        let mut spin_count = 0
+        let mut backoff = BACKOFF_INITIAL
+        
+        while !atomic_load(&o.done) {
+            spin_count += 1
+            if spin_count < MAX_SPIN_COUNT {
+                for _ in 0..backoff {
+                    @cpu_pause()
+                }
+                backoff = min(backoff * 2, BACKOFF_MAX)
+            } else {
+                @thread_yield()
+                spin_count = 0
+                backoff = BACKOFF_INITIAL
+            }
+        }
+        
+        @memory_fence_acquire()
+    }
+}
+
+fn once_is_done(o: &Once) -> bool {
+    let done = atomic_load(&o.done)
+    if done {
+        @memory_fence_acquire()
+    }
+    return done
+}
+
+// Helper functions
+fn min(a: u32, b: u32) -> u32 {
+    if a < b { a } else { b }
+}
+
+// Atomic operations (provided by runtime)
+fn atomic_new<T>(value: T) -> atomic<T> {
+    @runtime_atomic_new(value)
+}
+
+fn atomic_load<T>(a: &atomic<T>) -> T {
+    @runtime_atomic_load(a)
+}
+
+fn atomic_store<T>(a: &atomic<T>, value: T) {
+    @runtime_atomic_store(a, value)
+}
+
+fn atomic_compare_exchange<T>(a: &atomic<T>, expected: T, new: T) -> bool {
+    @runtime_atomic_compare_exchange(a, expected, new)
+}
+
+fn atomic_fetch_add<T>(a: &atomic<T>, delta: T) -> T {
+    @runtime_atomic_fetch_add(a, delta)
+}
+
+fn atomic_fetch_sub<T>(a: &atomic<T>, delta: T) -> T {
+    @runtime_atomic_fetch_sub(a, delta)
+}

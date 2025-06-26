@@ -1,0 +1,419 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Safety-Critical Pacemaker Example with Dual Redundancy
+// Demonstrates hardware synthesis for medical devices with strict determinism
+
+module examples.pacemaker {
+    use hardware_synthesis.synthesizer
+    use hardware_synthesis.pattern_detector
+    use hardware_synthesis.verification
+    use core.time
+    use core.safety
+    
+    // Pacemaker configuration constants
+    const MIN_HEART_RATE: u32 = 30      // bpm
+    const MAX_HEART_RATE: u32 = 180     // bpm
+    const DEFAULT_RATE: u32 = 70        // bpm
+    const REFRACTORY_PERIOD: u32 = 250  // ms
+    const MAX_PACE_WIDTH: u32 = 2       // ms
+    
+    // Safety criticality levels
+    enum CriticalityLevel {
+        SafetyEssential    // Failure could cause death
+        SafetyCritical     // Failure could cause injury
+        MissionCritical    // Failure affects device function
+        NonCritical        // Failure has minimal impact
+    }
+    
+    // Pacemaker operating modes
+    enum PacingMode {
+        VOO  // Ventricular pacing, no sensing
+        VVI  // Ventricular pacing and sensing, inhibited
+        DDD  // Dual chamber pacing and sensing
+        AAI  // Atrial pacing and sensing, inhibited
+    }
+    
+    // Heart signal detection
+    struct HeartSignal {
+        timestamp: time.Instant
+        amplitude_mv: f32
+        chamber: Chamber
+        signal_quality: f32
+    }
+    
+    enum Chamber {
+        Atrial
+        Ventricular
+    }
+    
+    // Pacemaker state (maintained in dual redundancy)
+    struct PacemakerState {
+        mode: PacingMode
+        base_rate: u32
+        last_beat_time: time.Instant
+        last_pace_time: time.Instant
+        battery_voltage: f32
+        lead_impedance: f32
+        diagnostics: DiagnosticData
+    }
+    
+    // Main pacemaker control loop - marked for hardware synthesis
+    #[synthesize_hardware]
+    #[criticality(SafetyEssential)]
+    #[dual_redundancy]
+    func pacemaker_control_loop(state: &mut PacemakerState, 
+                               signal: Option<HeartSignal>) -> PaceCommand {
+        // This function will be synthesized to hardware with dual redundancy
+        
+        let current_time = time.now()
+        let time_since_beat = current_time - state.last_beat_time
+        
+        // Detect if pacing is needed
+        let pace_needed = match state.mode {
+            PacingMode.VVI => {
+                vvi_pace_decision(state, signal, time_since_beat)
+            }
+            PacingMode.DDD => {
+                ddd_pace_decision(state, signal, time_since_beat)
+            }
+            PacingMode.VOO => {
+                // Fixed-rate pacing, no sensing
+                time_since_beat >= (60_000 / state.base_rate)
+            }
+            PacingMode.AAI => {
+                aai_pace_decision(state, signal, time_since_beat)
+            }
+        }
+        
+        // Generate pace command if needed
+        if pace_needed && is_safe_to_pace(state, current_time) {
+            state.last_pace_time = current_time
+            state.last_beat_time = current_time
+            
+            PaceCommand {
+                chamber: get_pacing_chamber(state.mode),
+                amplitude_v: calculate_pace_amplitude(state),
+                width_ms: calculate_pace_width(state),
+                timestamp: current_time
+            }
+        } else {
+            // Update beat time if natural heartbeat detected
+            if let Some(sig) = signal {
+                if is_valid_heartbeat(sig) {
+                    state.last_beat_time = sig.timestamp
+                }
+            }
+            
+            PaceCommand::None
+        }
+    }
+    
+    // VVI mode pacing decision - hardware accelerated
+    #[synthesize_hardware]
+    #[pipeline_stages(3)]
+    func vvi_pace_decision(state: &PacemakerState, 
+                          signal: Option<HeartSignal>,
+                          time_since_beat: u32) -> bool {
+        // Check if we're outside refractory period
+        if time_since_beat < REFRACTORY_PERIOD {
+            return false
+        }
+        
+        // Check for intrinsic ventricular activity
+        if let Some(sig) = signal {
+            if sig.chamber == Chamber.Ventricular && 
+               sig.amplitude_mv > get_sensing_threshold() {
+                return false  // Inhibit pacing
+            }
+        }
+        
+        // Pace if escape interval exceeded
+        time_since_beat >= (60_000 / state.base_rate)
+    }
+    
+    // DDD mode pacing decision - complex state machine
+    #[synthesize_hardware]
+    #[state_machine]
+    func ddd_pace_decision(state: &PacemakerState,
+                          signal: Option<HeartSignal>,
+                          time_since_beat: u32) -> bool {
+        // Implement AV synchrony with hardware state machine
+        enum DDDState {
+            WaitingAtrial
+            AVDelay
+            WaitingVentricular
+            Refractory
+        }
+        
+        static mut ddd_state: DDDState = DDDState.WaitingAtrial
+        static mut av_timer: u32 = 0
+        
+        match ddd_state {
+            DDDState.WaitingAtrial => {
+                if let Some(sig) = signal {
+                    if sig.chamber == Chamber.Atrial {
+                        ddd_state = DDDState.AVDelay
+                        av_timer = 0
+                        false
+                    } else if time_since_beat >= (60_000 / state.base_rate) {
+                        true  // Pace atrium
+                    } else {
+                        false
+                    }
+                } else if time_since_beat >= (60_000 / state.base_rate) {
+                    true  // Pace atrium
+                } else {
+                    false
+                }
+            }
+            DDDState.AVDelay => {
+                av_timer += 1
+                if av_timer >= get_av_delay() {
+                    ddd_state = DDDState.WaitingVentricular
+                    true  // Pace ventricle
+                } else if let Some(sig) = signal {
+                    if sig.chamber == Chamber.Ventricular {
+                        ddd_state = DDDState.Refractory
+                        false  // Natural ventricular beat
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false
+        }
+    }
+    
+    // Signal processing with hardware acceleration
+    #[synthesize_hardware]
+    #[pattern(SignalProcessing)]
+    func process_cardiac_signal(raw_signal: [f32; 256]) -> HeartSignal {
+        // Bandpass filter (0.5-100 Hz)
+        let filtered = bandpass_filter(raw_signal, 0.5, 100.0, 1000.0)
+        
+        // QRS detection using matched filter
+        let qrs_correlation = matched_filter(filtered, QRS_TEMPLATE)
+        
+        // Find peak
+        let (peak_index, peak_value) = find_peak(qrs_correlation)
+        
+        // Calculate signal quality
+        let noise_level = estimate_noise(filtered)
+        let snr = peak_value / noise_level
+        
+        HeartSignal {
+            timestamp: time.now(),
+            amplitude_mv: peak_value * ADC_SCALE,
+            chamber: classify_signal(filtered, peak_index),
+            signal_quality: snr / (snr + 1.0)  // Normalize to 0-1
+        }
+    }
+    
+    // Dual redundancy voter - hardware implemented
+    #[synthesize_hardware]
+    #[criticality(SafetyEssential)]
+    func redundancy_voter<T: Eq>(primary: T, secondary: T, tertiary: T) -> Result<T> {
+        // Triple modular redundancy with 2-out-of-3 voting
+        if primary == secondary {
+            Ok(primary)
+        } else if primary == tertiary {
+            Ok(primary)
+        } else if secondary == tertiary {
+            Ok(secondary)
+        } else {
+            Err(SafetyError::RedundancyMismatch)
+        }
+    }
+    
+    // Battery monitoring with predictive modeling
+    #[synthesize_hardware]
+    func monitor_battery(voltage: f32, current: f32, temperature: f32) -> BatteryStatus {
+        // Coulomb counting for remaining capacity
+        static mut charge_consumed: f32 = 0.0
+        charge_consumed += current * SAMPLE_PERIOD
+        
+        // Temperature compensation
+        let temp_factor = 1.0 - 0.01 * (temperature - 25.0).abs()
+        let effective_capacity = BATTERY_CAPACITY * temp_factor
+        
+        // Predict remaining lifetime
+        let remaining_charge = effective_capacity - charge_consumed
+        let average_current = calculate_moving_average(current)
+        let predicted_lifetime_days = remaining_charge / (average_current * 24.0)
+        
+        BatteryStatus {
+            voltage: voltage,
+            remaining_percent: (remaining_charge / effective_capacity) * 100.0,
+            predicted_lifetime_days: predicted_lifetime_days,
+            temperature: temperature,
+            needs_replacement: voltage < MIN_BATTERY_VOLTAGE || 
+                             predicted_lifetime_days < 30.0
+        }
+    }
+    
+    // Lead impedance monitoring - detects lead failures
+    #[synthesize_hardware]
+    #[pattern(SignalProcessing)]
+    func monitor_lead_impedance(test_pulse: Pulse) -> LeadStatus {
+        // Apply test pulse and measure response
+        let response = measure_pulse_response(test_pulse)
+        
+        // Calculate impedance using Ohm's law
+        let impedance = response.voltage / response.current
+        
+        // Detect lead issues
+        let status = if impedance < MIN_LEAD_IMPEDANCE {
+            LeadCondition::ShortCircuit
+        } else if impedance > MAX_LEAD_IMPEDANCE {
+            LeadCondition::OpenCircuit
+        } else if has_intermittent_changes(impedance) {
+            LeadCondition::Intermittent
+        } else {
+            LeadCondition::Normal
+        }
+        
+        LeadStatus {
+            impedance_ohms: impedance,
+            condition: status,
+            timestamp: time.now()
+        }
+    }
+    
+    // Telemetry encryption - hardware accelerated
+    #[synthesize_hardware]
+    #[pattern(Cryptographic)]
+    func encrypt_telemetry(data: TelemetryData, key: [u8; 32]) -> EncryptedPacket {
+        // Use AES-256-GCM for authenticated encryption
+        let nonce = generate_nonce()
+        let plaintext = serialize_telemetry(data)
+        
+        // Hardware-accelerated AES
+        let ciphertext = aes_256_gcm_encrypt(plaintext, key, nonce)
+        
+        EncryptedPacket {
+            nonce: nonce,
+            ciphertext: ciphertext.data,
+            auth_tag: ciphertext.tag,
+            timestamp: time.now()
+        }
+    }
+    
+    // Main pacemaker system with hardware synthesis
+    struct PacemakerSystem {
+        // Dual redundant state
+        primary_state: PacemakerState
+        secondary_state: PacemakerState
+        
+        // Hardware synthesis configuration
+        synthesis_config: synthesizer.SynthesisConfig
+        
+        // Verification results
+        verification_results: verification.VerificationResult
+    }
+    
+    impl PacemakerSystem {
+        // Initialize with hardware synthesis
+        func new() -> Result<PacemakerSystem> {
+            // Configure hardware synthesis
+            let config = synthesizer.SynthesisConfig {
+                target_platform: synthesizer.TargetPlatform.ASIC(synthesizer.ASICTarget {
+                    process_node: "28nm",
+                    power_budget: 10e-6,  // 10 microwatts
+                    area_budget: 1.0      // 1 mm²
+                }),
+                optimization_level: synthesizer.OptimizationLevel.PowerOptimized,
+                determinism_mode: synthesizer.DeterminismMode.Strict,
+                clock_frequency: 32_768,  // 32.768 kHz for low power
+                resource_constraints: synthesizer.ResourceConstraints {
+                    max_power: 10e-6,
+                    max_area: 1.0
+                }
+            }
+            
+            // Synthesize critical functions to hardware
+            let synthesis_result = synthesizer.synthesize_module(
+                module_of!(pacemaker_control_loop),
+                config
+            )?
+            
+            // Verify hardware correctness
+            let verif_config = verification.VerificationConfig {
+                verification_method: verification.VerificationMethod.Inductive,
+                bound_depth: 10000,
+                tolerance: 0.0,  // Exact match required
+                coverage_target: 1.0  // 100% coverage required
+            }
+            
+            let verification = verification.verify_hardware_synthesis(
+                pacemaker_control_loop,
+                synthesis_result.hardware_modules[0],
+                verif_config
+            )?
+            
+            // Ensure verification passed
+            if !verification.equivalence_proven || !verification.determinism_proven {
+                return Err(SafetyError::VerificationFailed)
+            }
+            
+            Ok(PacemakerSystem {
+                primary_state: PacemakerState::default(),
+                secondary_state: PacemakerState::default(),
+                synthesis_config: config,
+                verification_results: verification
+            })
+        }
+        
+        // Run pacemaker with hardware acceleration
+        func run(&mut self) -> Result<()> {
+            loop {
+                // Read cardiac signals
+                let signal = self.read_cardiac_signal()?
+                
+                // Run control loop on both redundant systems
+                let primary_cmd = pacemaker_control_loop(&mut self.primary_state, signal)
+                let secondary_cmd = pacemaker_control_loop(&mut self.secondary_state, signal)
+                
+                // Vote on command
+                let final_cmd = redundancy_voter(
+                    primary_cmd,
+                    secondary_cmd,
+                    primary_cmd  // Use primary as tiebreaker
+                )?
+                
+                // Execute pace command if needed
+                if let Some(cmd) = final_cmd {
+                    self.deliver_pace(cmd)?
+                }
+                
+                // Monitor system health
+                self.monitor_system_health()?
+                
+                // Sleep until next cycle
+                time.sleep_until_next_sample()
+            }
+        }
+    }
+}
+
+// Example usage showing hardware synthesis for safety-critical medical device:
+// let mut pacemaker = PacemakerSystem::new()?
+// 
+// // The pacemaker now runs with:
+// // - Hardware-accelerated signal processing
+// // - Dual redundant control loops
+// // - Formally verified deterministic behavior
+// // - Ultra-low power consumption (10 μW)
+// // - Guaranteed timing (32.768 kHz operation)
+//
+// pacemaker.run()?

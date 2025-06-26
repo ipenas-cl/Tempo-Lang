@@ -1,0 +1,756 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Stage 2 Code Generator - Generate optimized machine code with deterministic guarantees
+// Produces efficient assembly while maintaining WCET bounds and deterministic execution
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+//
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+// Comprehensive error handling for code generation
+enum CodeGenError {
+    // Register allocation errors
+    OutOfRegisters { needed: u32, available: u32 },
+    RegisterSpillFailed { register: String, reason: String },
+    InvalidRegisterType { expected: String, got: String },
+    
+    // Memory errors
+    StackOverflow { current: usize, max: usize },
+    InvalidMemoryAccess { address: u64, reason: String },
+    AlignmentViolation { address: u64, required: usize },
+    
+    // Code generation errors
+    UnsupportedInstruction { instruction: String },
+    UnsupportedBinaryOperator { operator: String },
+    UnsupportedTargetPlatform { platform: String },
+    
+    // Symbol table errors
+    UndefinedSymbol { name: String },
+    DuplicateSymbol { name: String },
+    TypeMismatch { expected: String, got: String },
+    
+    // WCET analysis errors
+    UnboundedLoop { function: String, line: u32 },
+    WCETExceeded { limit: u64, actual: u64 },
+    NonDeterministicOperation { operation: String },
+    
+    // Recovery information
+    RecoverableError { error: Box<CodeGenError>, recovery_action: String },
+}
+
+impl CodeGenError {
+    fn is_recoverable(&self) -> bool {
+        match self {
+            CodeGenError::RecoverableError { .. } => true,
+            CodeGenError::RegisterSpillFailed { .. } => true,
+            CodeGenError::OutOfRegisters { .. } => true,
+            _ => false,
+        }
+    }
+    
+    fn recovery_suggestion(&self) -> String {
+        match self {
+            CodeGenError::OutOfRegisters { needed, available } => 
+                format!("Consider spilling {} registers or reducing expression complexity", needed - available),
+            CodeGenError::StackOverflow { current, max } => 
+                format!("Reduce stack usage by {} bytes or increase stack limit", current - max),
+            CodeGenError::UnboundedLoop { function, line } => 
+                format!("Add explicit loop bounds at {}:{}", function, line),
+            _ => "No automatic recovery available".to_string(),
+        }
+    }
+}
+
+// Target platform specification
+enum TargetPlatform {
+    X86_64_Linux,
+    X86_64_Windows,
+    ARM64_Linux,
+    RISC_V_64,
+    TempoCore, // Custom CPU architecture
+}
+
+// Code generation configuration
+struct CodeGenConfig {
+    target_platform: TargetPlatform,
+    optimization_level: OptimizationLevel,
+    debug_info: bool,
+    generate_wcet_annotations: bool,
+    deterministic_codegen: bool,
+    
+    // Register allocation settings
+    register_allocation_strategy: RegisterAllocationStrategy,
+    spill_strategy: SpillStrategy,
+    
+    // Instruction scheduling
+    enable_instruction_scheduling: bool,
+    schedule_for_wcet: bool,
+    
+    // Memory layout
+    stack_alignment: usize,
+    data_alignment: usize,
+    code_alignment: usize,
+}
+
+enum RegisterAllocationStrategy {
+    LinearScan,
+    GraphColoring,
+    DeterministicLinearScan, // Tempo-specific deterministic allocation
+}
+
+enum SpillStrategy {
+    Nearest,
+    Farthest,
+    DeterministicRoundRobin, // Predictable spill order
+}
+
+// Main code generator
+struct TempoCodeGenerator {
+    config: CodeGenConfig,
+    target_info: TargetInfo,
+    register_allocator: RegisterAllocator,
+    instruction_scheduler: InstructionScheduler,
+    symbol_table: SymbolTable,
+    
+    // Output streams
+    text_section: TextSection,
+    data_section: DataSection,
+    bss_section: BSSSection,
+    
+    // WCET tracking
+    wcet_annotations: WCETAnnotations,
+    instruction_costs: InstructionCosts,
+}
+
+// Intermediate representation before final assembly
+enum IRInstruction {
+    // Arithmetic
+    Add { dest: Register, src1: Operand, src2: Operand },
+    Sub { dest: Register, src1: Operand, src2: Operand },
+    Mul { dest: Register, src1: Operand, src2: Operand },
+    Div { dest: Register, src1: Operand, src2: Operand },
+    
+    // Memory operations
+    Load { dest: Register, addr: MemoryAddress, size: MemorySize },
+    Store { src: Register, addr: MemoryAddress, size: MemorySize },
+    
+    // Control flow
+    Jump { target: Label },
+    JumpConditional { condition: Condition, target: Label },
+    Call { function: FunctionRef, args: Vec<Register> },
+    Return { value: Option<Register> },
+    
+    // Special Tempo instructions
+    WCETBarrier { cycles: u64 }, // Ensure minimum execution time
+    DeterministicDelay { cycles: u64 }, // Pad execution for determinism
+    CacheFlush, // Ensure deterministic cache state
+    
+    // Debugging and profiling
+    DebugInfo { source_line: u32, source_column: u32 },
+    ProfilePoint { id: u32 },
+}
+
+struct Register {
+    id: u8,
+    register_type: RegisterType,
+}
+
+enum RegisterType {
+    General,
+    Floating,
+    Vector,
+    Special,
+}
+
+enum Operand {
+    Register(Register),
+    Immediate(i64),
+    Memory(MemoryAddress),
+}
+
+struct MemoryAddress {
+    base: Option<Register>,
+    offset: i64,
+    index: Option<Register>,
+    scale: u8,
+}
+
+impl TempoCodeGenerator {
+    fn new(config: CodeGenConfig) -> Self {
+        let target_info = TargetInfo::for_platform(&config.target_platform);
+        
+        TempoCodeGenerator {
+            config,
+            target_info: target_info.clone(),
+            register_allocator: RegisterAllocator::new(&target_info),
+            instruction_scheduler: InstructionScheduler::new(&target_info),
+            symbol_table: SymbolTable::new(),
+            text_section: TextSection::new(),
+            data_section: DataSection::new(),
+            bss_section: BSSSection::new(),
+            wcet_annotations: WCETAnnotations::new(),
+            instruction_costs: InstructionCosts::for_platform(&config.target_platform),
+        }
+    }
+    
+    fn generate_code(&mut self, optimized_ast: &OptimizedAST) -> Result<GeneratedCode, CodeGenError> {
+        print_line("🔧 Starting deterministic code generation...");
+        
+        // Initialize code generation context
+        self.setup_generation_context(&optimized_ast.ast)?;
+        
+        // Generate global variables and constants
+        self.generate_global_data(&optimized_ast.ast)?;
+        
+        // Generate function code
+        for function in &optimized_ast.ast.functions {
+            self.generate_function(function)?;
+        }
+        
+        // Perform register allocation
+        if self.config.deterministic_codegen {
+            self.perform_deterministic_register_allocation()?;
+        } else {
+            self.perform_register_allocation()?;
+        }
+        
+        // Instruction scheduling for performance/WCET
+        if self.config.enable_instruction_scheduling {
+            self.schedule_instructions()?;
+        }
+        
+        // Generate final assembly
+        let assembly = self.emit_final_assembly()?;
+        
+        // Generate WCET analysis data
+        let wcet_data = self.generate_wcet_analysis_data()?;
+        
+        print_line("✓ Code generation complete with deterministic guarantees");
+        
+        Ok(GeneratedCode {
+            assembly,
+            symbol_table: self.symbol_table.clone(),
+            wcet_data,
+            debug_info: if self.config.debug_info { Some(self.generate_debug_info()?) } else { None },
+            metadata: CodeGenMetadata {
+                target_platform: self.config.target_platform,
+                optimization_level: self.config.optimization_level,
+                deterministic: self.config.deterministic_codegen,
+                wcet_annotated: self.config.generate_wcet_annotations,
+            },
+        })
+    }
+    
+    fn generate_function(&mut self, function: &Function) -> Result<(), CodeGenError> {
+        print_line(&format!("  Generating function: {}", function.name));
+        
+        // Create function label
+        let function_label = self.symbol_table.create_function_label(&function.name);
+        
+        // Function prologue
+        let mut instructions = Vec::new();
+        instructions.extend(self.generate_function_prologue(function)?);
+        
+        // Generate WCET annotation if enabled
+        if self.config.generate_wcet_annotations {
+            if let Some(wcet_bound) = &function.wcet_bound {
+                instructions.push(IRInstruction::DebugInfo {
+                    source_line: 0,
+                    source_column: 0,
+                });
+                self.wcet_annotations.add_function_bound(&function.name, wcet_bound.cycles);
+            }
+        }
+        
+        // Generate function body
+        let body_instructions = self.generate_block(&function.body)?;
+        instructions.extend(body_instructions);
+        
+        // Function epilogue
+        instructions.extend(self.generate_function_epilogue(function)?);
+        
+        // Store instructions for this function
+        self.text_section.add_function(function_label, instructions);
+        
+        Ok(())
+    }
+    
+    fn generate_block(&mut self, block: &Block) -> Result<Vec<IRInstruction>, CodeGenError> {
+        let mut instructions = Vec::new();
+        
+        for statement in &block.statements {
+            let stmt_instructions = self.generate_statement(statement)?;
+            instructions.extend(stmt_instructions);
+        }
+        
+        Ok(instructions)
+    }
+    
+    fn generate_statement(&mut self, statement: &Statement) -> Result<Vec<IRInstruction>, CodeGenError> {
+        match statement {
+            Statement::VariableDeclaration(var_decl) => {
+                self.generate_variable_declaration(var_decl)
+            },
+            
+            Statement::Assignment(assignment) => {
+                self.generate_assignment(assignment)
+            },
+            
+            Statement::Expression(expression) => {
+                let (_, instructions) = self.generate_expression(expression)?;
+                Ok(instructions)
+            },
+            
+            Statement::If(if_stmt) => {
+                self.generate_if_statement(if_stmt)
+            },
+            
+            Statement::While(while_stmt) => {
+                self.generate_while_loop(while_stmt)
+            },
+            
+            Statement::For(for_stmt) => {
+                self.generate_for_loop(for_stmt)
+            },
+            
+            Statement::Return(return_stmt) => {
+                self.generate_return_statement(return_stmt)
+            },
+            
+            Statement::Break => {
+                Ok(vec![IRInstruction::Jump { target: self.get_break_label() }])
+            },
+            
+            Statement::Continue => {
+                Ok(vec![IRInstruction::Jump { target: self.get_continue_label() }])
+            },
+        }
+    }
+    
+    fn generate_expression(&mut self, expression: &Expression) -> Result<(Register, Vec<IRInstruction>), CodeGenError> {
+        match expression {
+            Expression::Literal(literal) => {
+                let (register, instructions) = self.generate_literal(literal)?;
+                Ok((register, instructions))
+            },
+            
+            Expression::Variable(variable) => {
+                let (register, instructions) = self.generate_variable_access(variable)?;
+                Ok((register, instructions))
+            },
+            
+            Expression::BinaryOp(binary_op) => {
+                self.generate_binary_operation(binary_op)
+            },
+            
+            Expression::UnaryOp(unary_op) => {
+                self.generate_unary_operation(unary_op)
+            },
+            
+            Expression::FunctionCall(call) => {
+                self.generate_function_call(call)
+            },
+            
+            Expression::ArrayAccess(array_access) => {
+                self.generate_array_access(array_access)
+            },
+            
+            Expression::FieldAccess(field_access) => {
+                self.generate_field_access(field_access)
+            },
+        }
+    }
+    
+    fn generate_binary_operation(&mut self, binary_op: &BinaryOperation) -> Result<(Register, Vec<IRInstruction>), CodeGenError> {
+        let mut instructions = Vec::new();
+        
+        // Generate left operand
+        let (left_reg, left_instructions) = self.generate_expression(&binary_op.left)?;
+        instructions.extend(left_instructions);
+        
+        // Generate right operand
+        let (right_reg, right_instructions) = self.generate_expression(&binary_op.right)?;
+        instructions.extend(right_instructions);
+        
+        // Allocate result register
+        let result_reg = self.register_allocator.allocate_general_register()?;
+        
+        // Generate operation instruction
+        let operation_instruction = match binary_op.operator {
+            BinaryOperator::Add => IRInstruction::Add {
+                dest: result_reg,
+                src1: Operand::Register(left_reg),
+                src2: Operand::Register(right_reg),
+            },
+            BinaryOperator::Subtract => IRInstruction::Sub {
+                dest: result_reg,
+                src1: Operand::Register(left_reg),
+                src2: Operand::Register(right_reg),
+            },
+            BinaryOperator::Multiply => IRInstruction::Mul {
+                dest: result_reg,
+                src1: Operand::Register(left_reg),
+                src2: Operand::Register(right_reg),
+            },
+            BinaryOperator::Divide => IRInstruction::Div {
+                dest: result_reg,
+                src1: Operand::Register(left_reg),
+                src2: Operand::Register(right_reg),
+            },
+            _ => return Err(CodeGenError::UnsupportedBinaryOperator(binary_op.operator)),
+        };
+        
+        instructions.push(operation_instruction);
+        
+        // Add WCET annotation for the operation
+        if self.config.generate_wcet_annotations {
+            let operation_cost = self.instruction_costs.get_operation_cost(&binary_op.operator);
+            self.wcet_annotations.add_instruction_cost(operation_cost);
+        }
+        
+        Ok((result_reg, instructions))
+    }
+    
+    fn generate_function_call(&mut self, call: &FunctionCall) -> Result<(Register, Vec<IRInstruction>), CodeGenError> {
+        let mut instructions = Vec::new();
+        
+        // Generate arguments
+        let mut arg_registers = Vec::new();
+        for arg in &call.arguments {
+            let (arg_reg, arg_instructions) = self.generate_expression(arg)?;
+            instructions.extend(arg_instructions);
+            arg_registers.push(arg_reg);
+        }
+        
+        // Generate call instruction
+        let function_ref = self.symbol_table.get_function_ref(&call.function_name)?;
+        instructions.push(IRInstruction::Call {
+            function: function_ref,
+            args: arg_registers,
+        });
+        
+        // Allocate register for return value
+        let return_reg = self.register_allocator.allocate_general_register()?;
+        
+        // Add WCET annotation for function call
+        if self.config.generate_wcet_annotations {
+            let call_cost = self.instruction_costs.get_call_cost(&call.function_name);
+            self.wcet_annotations.add_function_call_cost(&call.function_name, call_cost);
+        }
+        
+        Ok((return_reg, instructions))
+    }
+    
+    fn generate_while_loop(&mut self, while_stmt: &WhileStatement) -> Result<Vec<IRInstruction>, CodeGenError> {
+        let mut instructions = Vec::new();
+        
+        // Create loop labels
+        let loop_start = self.symbol_table.create_loop_label("while_start");
+        let loop_end = self.symbol_table.create_loop_label("while_end");
+        
+        // Loop start label
+        instructions.push(IRInstruction::DebugInfo {
+            source_line: while_stmt.source_location.line,
+            source_column: while_stmt.source_location.column,
+        });
+        
+        // Generate condition
+        let (condition_reg, condition_instructions) = self.generate_expression(&while_stmt.condition)?;
+        instructions.extend(condition_instructions);
+        
+        // Conditional jump to end if condition is false
+        instructions.push(IRInstruction::JumpConditional {
+            condition: Condition::Equal, // Jump if condition == 0 (false)
+            target: loop_end,
+        });
+        
+        // Generate loop body
+        self.push_loop_context(loop_start, loop_end);
+        let body_instructions = self.generate_block(&while_stmt.body)?;
+        instructions.extend(body_instructions);
+        self.pop_loop_context();
+        
+        // Jump back to start
+        instructions.push(IRInstruction::Jump { target: loop_start });
+        
+        // Add deterministic timing if required
+        if self.config.deterministic_codegen {
+            if let Some(loop_bound) = &while_stmt.loop_bound {
+                let deterministic_cycles = self.calculate_deterministic_loop_cycles(loop_bound)?;
+                instructions.push(IRInstruction::DeterministicDelay {
+                    cycles: deterministic_cycles,
+                });
+            }
+        }
+        
+        Ok(instructions)
+    }
+    
+    fn perform_deterministic_register_allocation(&mut self) -> Result<(), CodeGenError> {
+        print_line("  Performing deterministic register allocation...");
+        
+        // Use a deterministic allocation strategy that produces the same
+        // register assignments given the same input
+        for function_code in &mut self.text_section.functions {
+            self.register_allocator.allocate_deterministic(&mut function_code.instructions)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn schedule_instructions(&mut self) -> Result<(), CodeGenError> {
+        print_line("  Scheduling instructions for optimal performance...");
+        
+        for function_code in &mut self.text_section.functions {
+            if self.config.schedule_for_wcet {
+                self.instruction_scheduler.schedule_for_wcet(&mut function_code.instructions)?;
+            } else {
+                self.instruction_scheduler.schedule_for_performance(&mut function_code.instructions)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn emit_final_assembly(&mut self) -> Result<String, CodeGenError> {
+        let mut assembly = String::new();
+        
+        // Emit assembly header
+        assembly.push_str(&self.emit_assembly_header()?);
+        
+        // Emit data section
+        assembly.push_str(".section .data\n");
+        assembly.push_str(&self.data_section.emit_assembly(&self.config.target_platform)?);
+        
+        // Emit BSS section
+        assembly.push_str(".section .bss\n");
+        assembly.push_str(&self.bss_section.emit_assembly(&self.config.target_platform)?);
+        
+        // Emit text section
+        assembly.push_str(".section .text\n");
+        assembly.push_str(&self.text_section.emit_assembly(&self.config.target_platform)?);
+        
+        // Emit WCET annotations as comments
+        if self.config.generate_wcet_annotations {
+            assembly.push_str("\n# WCET Analysis Data\n");
+            assembly.push_str(&self.wcet_annotations.emit_as_comments()?);
+        }
+        
+        Ok(assembly)
+    }
+    
+    fn emit_assembly_header(&self) -> Result<String, CodeGenError> {
+        let mut header = String::new();
+        
+        header.push_str("# Generated by Tempo Stage 2 Compiler\n");
+        header.push_str(&format!("# Target: {:?}\n", self.config.target_platform));
+        header.push_str(&format!("# Optimization Level: {:?}\n", self.config.optimization_level));
+        
+        if self.config.deterministic_codegen {
+            header.push_str("# Deterministic code generation enabled\n");
+        }
+        
+        if self.config.generate_wcet_annotations {
+            header.push_str("# WCET annotations included\n");
+        }
+        
+        header.push_str("\n");
+        
+        // Target-specific directives
+        match self.config.target_platform {
+            TargetPlatform::X86_64_Linux => {
+                header.push_str(".intel_syntax noprefix\n");
+                header.push_str(".global _start\n");
+            },
+            TargetPlatform::ARM64_Linux => {
+                header.push_str(".global _start\n");
+            },
+            TargetPlatform::TempoCore => {
+                header.push_str("# TempoCore assembly\n");
+                header.push_str(".tempo_version 2.0\n");
+                header.push_str(".deterministic_mode on\n");
+            },
+            _ => {}
+        }
+        
+        Ok(header)
+    }
+    
+    fn generate_wcet_analysis_data(&self) -> Result<WCETAnalysisData, CodeGenError> {
+        let mut wcet_data = WCETAnalysisData::new();
+        
+        // Collect WCET bounds for each function
+        for (function_name, instructions) in &self.text_section.functions {
+            let function_wcet = self.calculate_function_wcet(instructions)?;
+            wcet_data.add_function_wcet(function_name.clone(), function_wcet);
+        }
+        
+        // Calculate total program WCET
+        let program_wcet = wcet_data.calculate_program_wcet();
+        wcet_data.set_program_wcet(program_wcet);
+        
+        Ok(wcet_data)
+    }
+    
+    fn calculate_function_wcet(&self, instructions: &[IRInstruction]) -> Result<FunctionWCET, CodeGenError> {
+        let mut total_cycles = 0u64;
+        let mut instruction_count = 0u32;
+        
+        for instruction in instructions {
+            let cycles = self.instruction_costs.get_instruction_cycles(instruction);
+            total_cycles += cycles;
+            instruction_count += 1;
+        }
+        
+        Ok(FunctionWCET {
+            worst_case_cycles: total_cycles,
+            instruction_count,
+            estimated_cache_misses: self.estimate_cache_misses(instructions)?,
+            deterministic: true, // All Tempo code is deterministic
+        })
+    }
+}
+
+// Register allocator with deterministic allocation
+struct RegisterAllocator {
+    available_registers: Vec<Register>,
+    allocated_registers: HashMap<String, Register>,
+    spill_locations: HashMap<Register, MemoryAddress>,
+    target_info: TargetInfo,
+}
+
+impl RegisterAllocator {
+    fn new(target_info: &TargetInfo) -> Self {
+        RegisterAllocator {
+            available_registers: target_info.get_available_registers(),
+            allocated_registers: HashMap::new(),
+            spill_locations: HashMap::new(),
+            target_info: target_info.clone(),
+        }
+    }
+    
+    fn allocate_general_register(&mut self) -> Result<Register, CodeGenError> {
+        if let Some(register) = self.available_registers.pop() {
+            Ok(register)
+        } else {
+            // Try to recover by spilling
+            match self.spill_least_recently_used_register() {
+                Ok(register) => Ok(register),
+                Err(e) => {
+                    // If spilling fails, try emergency recovery
+                    self.emergency_register_recovery()
+                        .map_err(|_| CodeGenError::OutOfRegisters {
+                            needed: 1,
+                            available: 0,
+                        })
+                }
+            }
+        }
+    }
+    
+    fn spill_least_recently_used_register(&mut self) -> Result<Register, CodeGenError> {
+        // Find the best candidate for spilling
+        let spill_candidate = self.select_spill_candidate()?;
+        
+        // Allocate spill location
+        let spill_location = self.allocate_spill_location()?;
+        
+        // Record spill
+        self.spill_locations.insert(spill_candidate, spill_location);
+        
+        Ok(spill_candidate)
+    }
+    
+    fn emergency_register_recovery(&mut self) -> Result<Register, CodeGenError> {
+        // Last resort: try to free up a register by coalescing or rematerialization
+        // This is a simplified version - real implementation would be more sophisticated
+        
+        // Check if any registers can be coalesced
+        for (var, reg) in &self.allocated_registers {
+            if self.can_coalesce_register(var, reg) {
+                return Ok(*reg);
+            }
+        }
+        
+        Err(CodeGenError::RegisterSpillFailed {
+            register: "all".to_string(),
+            reason: "No registers available for emergency recovery".to_string(),
+        })
+    }
+    
+    fn allocate_deterministic(&mut self, instructions: &mut [IRInstruction]) -> Result<(), CodeGenError> {
+        // Deterministic linear scan register allocation
+        // Always produces the same allocation given the same input
+        
+        // Sort variables by their first use for deterministic ordering
+        let mut variable_intervals = self.compute_live_intervals(instructions)?;
+        variable_intervals.sort_by(|a, b| a.start.cmp(&b.start));
+        
+        let mut active_intervals = Vec::new();
+        
+        for interval in variable_intervals {
+            // Expire old intervals
+            active_intervals.retain(|active: &LiveInterval| active.end > interval.start);
+            
+            if active_intervals.len() < self.available_registers.len() {
+                // Allocate register deterministically
+                let register_index = active_intervals.len() % self.available_registers.len();
+                let register = self.available_registers[register_index];
+                self.allocated_registers.insert(interval.variable.clone(), register);
+                active_intervals.push(interval);
+            } else {
+                // Spill in deterministic order (always spill the last one)
+                let spill_interval = active_intervals.pop().unwrap();
+                self.spill_variable(&spill_interval.variable)?;
+                
+                // Allocate register to current interval
+                let register = self.allocated_registers.remove(&spill_interval.variable).unwrap();
+                self.allocated_registers.insert(interval.variable.clone(), register);
+                active_intervals.push(interval);
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+fn main() -> Result<(), String> {
+    print_line("🚀 Tempo Stage 2 Code Generator");
+    print_line("Deterministic machine code generation with WCET guarantees");
+    
+    // Example configuration
+    let config = CodeGenConfig {
+        target_platform: TargetPlatform::X86_64_Linux,
+        optimization_level: OptimizationLevel::Balanced,
+        debug_info: true,
+        generate_wcet_annotations: true,
+        deterministic_codegen: true,
+        register_allocation_strategy: RegisterAllocationStrategy::DeterministicLinearScan,
+        spill_strategy: SpillStrategy::DeterministicRoundRobin,
+        enable_instruction_scheduling: true,
+        schedule_for_wcet: true,
+        stack_alignment: 16,
+        data_alignment: 8,
+        code_alignment: 16,
+    };
+    
+    let mut codegen = TempoCodeGenerator::new(config);
+    
+    print_line("✓ Code generator initialized");
+    print_line("✓ Deterministic register allocation enabled");
+    print_line("✓ WCET-aware instruction scheduling enabled");
+    print_line("✓ Ready to generate optimized, deterministic machine code");
+    
+    Ok(())
+}

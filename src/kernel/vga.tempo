@@ -1,0 +1,234 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS VGA Text Mode Driver
+// Provides screen output functionality
+
+// VGA text mode constants
+const VGA_WIDTH = 80
+const VGA_HEIGHT = 25
+const VGA_MEMORY = 0xB8000 as *u16
+
+// Color constants
+const VGA_COLOR_BLACK = 0
+const VGA_COLOR_BLUE = 1
+const VGA_COLOR_GREEN = 2
+const VGA_COLOR_CYAN = 3
+const VGA_COLOR_RED = 4
+const VGA_COLOR_MAGENTA = 5
+const VGA_COLOR_BROWN = 6
+const VGA_COLOR_LIGHT_GREY = 7
+const VGA_COLOR_DARK_GREY = 8
+const VGA_COLOR_LIGHT_BLUE = 9
+const VGA_COLOR_LIGHT_GREEN = 10
+const VGA_COLOR_LIGHT_CYAN = 11
+const VGA_COLOR_LIGHT_RED = 12
+const VGA_COLOR_LIGHT_MAGENTA = 13
+const VGA_COLOR_LIGHT_BROWN = 14
+const VGA_COLOR_WHITE = 15
+
+// Current cursor position and color
+var cursor_x: u32 = 0
+var cursor_y: u32 = 0
+var current_color: u8 = 0
+
+// Initialize VGA driver
+func vga_init() {
+    // Set default color (white on black)
+    current_color = vga_make_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK)
+    
+    // Clear screen
+    vga_clear()
+    
+    // Reset cursor
+    cursor_x = 0
+    cursor_y = 0
+    update_cursor()
+}
+
+// Make a VGA color byte from foreground and background
+func vga_make_color(fg: u8, bg: u8) -> u8 {
+    return fg | (bg << 4)
+}
+
+// Make a VGA character with color
+func vga_make_char(ch: u8, color: u8) -> u16 {
+    return ch as u16 | (color as u16 << 8)
+}
+
+// Clear the screen
+func vga_clear() {
+    let blank = vga_make_char(' ' as u8, current_color)
+    
+    for y in 0..VGA_HEIGHT {
+        for x in 0..VGA_WIDTH {
+            let index = y * VGA_WIDTH + x
+            VGA_MEMORY[index] = blank
+        }
+    }
+}
+
+// Put a character at specific position
+func vga_putchar_at(ch: u8, x: u32, y: u32) {
+    if x >= VGA_WIDTH || y >= VGA_HEIGHT {
+        return
+    }
+    
+    let index = y * VGA_WIDTH + x
+    VGA_MEMORY[index] = vga_make_char(ch, current_color)
+}
+
+// Put a character at cursor position
+func vga_putchar(ch: u8) {
+    // Handle special characters
+    if ch == '\n' as u8 {
+        cursor_x = 0
+        cursor_y += 1
+    } else if ch == '\r' as u8 {
+        cursor_x = 0
+    } else if ch == '\t' as u8 {
+        // Tab to next 4-character boundary
+        cursor_x = (cursor_x + 4) & ~3
+    } else if ch == '\b' as u8 {
+        // Backspace
+        if cursor_x > 0 {
+            cursor_x -= 1
+            vga_putchar_at(' ' as u8, cursor_x, cursor_y)
+        }
+    } else {
+        // Normal character
+        vga_putchar_at(ch, cursor_x, cursor_y)
+        cursor_x += 1
+    }
+    
+    // Wrap to next line if needed
+    if cursor_x >= VGA_WIDTH {
+        cursor_x = 0
+        cursor_y += 1
+    }
+    
+    // Scroll if needed
+    if cursor_y >= VGA_HEIGHT {
+        vga_scroll()
+        cursor_y = VGA_HEIGHT - 1
+    }
+    
+    update_cursor()
+}
+
+// Print a string
+func vga_print(str: *u8) {
+    var i: u32 = 0
+    while str[i] != 0 {
+        vga_putchar(str[i])
+        i += 1
+    }
+}
+
+// Print a number in hexadecimal
+func vga_print_hex(num: u32) {
+    vga_print("0x")
+    
+    // Convert to hex string
+    let hex_chars = "0123456789ABCDEF"
+    var digits: [8]u8
+    
+    for i in 0..8 {
+        digits[7 - i] = hex_chars[(num >> (i * 4)) & 0xF]
+    }
+    
+    // Skip leading zeros
+    var start = 0
+    while start < 7 && digits[start] == '0' as u8 {
+        start += 1
+    }
+    
+    // Print digits
+    for i in start..8 {
+        vga_putchar(digits[i])
+    }
+}
+
+// Print a decimal number
+func vga_print_dec(num: u32) {
+    if num == 0 {
+        vga_putchar('0' as u8)
+        return
+    }
+    
+    // Convert to decimal string (reversed)
+    var digits: [10]u8
+    var count = 0
+    var n = num
+    
+    while n > 0 {
+        digits[count] = '0' as u8 + (n % 10) as u8
+        n /= 10
+        count += 1
+    }
+    
+    // Print in correct order
+    for i in 0..count {
+        vga_putchar(digits[count - 1 - i])
+    }
+}
+
+// Scroll screen up one line
+func vga_scroll() {
+    // Move all lines up by one
+    for y in 0..(VGA_HEIGHT - 1) {
+        for x in 0..VGA_WIDTH {
+            let src_index = (y + 1) * VGA_WIDTH + x
+            let dst_index = y * VGA_WIDTH + x
+            VGA_MEMORY[dst_index] = VGA_MEMORY[src_index]
+        }
+    }
+    
+    // Clear last line
+    let blank = vga_make_char(' ' as u8, current_color)
+    for x in 0..VGA_WIDTH {
+        let index = (VGA_HEIGHT - 1) * VGA_WIDTH + x
+        VGA_MEMORY[index] = blank
+    }
+}
+
+// Update hardware cursor position
+func update_cursor() {
+    let pos = cursor_y * VGA_WIDTH + cursor_x
+    
+    // Send cursor position to VGA controller
+    outb(0x3D4, 0x0F)
+    outb(0x3D5, (pos & 0xFF) as u8)
+    outb(0x3D4, 0x0E)
+    outb(0x3D5, ((pos >> 8) & 0xFF) as u8)
+}
+
+// Set text color
+func vga_set_color(fg: u8, bg: u8) {
+    current_color = vga_make_color(fg, bg)
+}
+
+// Get current cursor position
+func vga_get_cursor() -> (u32, u32) {
+    return (cursor_x, cursor_y)
+}
+
+// Set cursor position
+func vga_set_cursor(x: u32, y: u32) {
+    if x < VGA_WIDTH && y < VGA_HEIGHT {
+        cursor_x = x
+        cursor_y = y
+        update_cursor()
+    }
+}
+
+// Assembly port I/O functions
+extern func outb(port: u16, value: u8)

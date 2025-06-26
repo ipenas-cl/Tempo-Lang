@@ -1,0 +1,354 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// UEFI Protocol Definitions and Structures
+
+// Basic UEFI types
+type EFI_STATUS = usize;
+type EFI_HANDLE = *void;
+type EFI_PHYSICAL_ADDRESS = u64;
+type EFI_VIRTUAL_ADDRESS = u64;
+type EFI_EVENT = *void;
+type EFI_TPL = usize;
+
+// UEFI Status codes
+const EFI_SUCCESS: EFI_STATUS = 0;
+const EFI_LOAD_ERROR: EFI_STATUS = 0x8000000000000001;
+const EFI_INVALID_PARAMETER: EFI_STATUS = 0x8000000000000002;
+const EFI_UNSUPPORTED: EFI_STATUS = 0x8000000000000003;
+const EFI_BAD_BUFFER_SIZE: EFI_STATUS = 0x8000000000000004;
+const EFI_BUFFER_TOO_SMALL: EFI_STATUS = 0x8000000000000005;
+const EFI_NOT_READY: EFI_STATUS = 0x8000000000000006;
+const EFI_DEVICE_ERROR: EFI_STATUS = 0x8000000000000007;
+const EFI_WRITE_PROTECTED: EFI_STATUS = 0x8000000000000008;
+const EFI_OUT_OF_RESOURCES: EFI_STATUS = 0x8000000000000009;
+const EFI_NOT_FOUND: EFI_STATUS = 0x800000000000000E;
+
+// Memory types
+const EfiReservedMemoryType: u32 = 0;
+const EfiLoaderCode: u32 = 1;
+const EfiLoaderData: u32 = 2;
+const EfiBootServicesCode: u32 = 3;
+const EfiBootServicesData: u32 = 4;
+const EfiRuntimeServicesCode: u32 = 5;
+const EfiRuntimeServicesData: u32 = 6;
+const EfiConventionalMemory: u32 = 7;
+const EfiUnusableMemory: u32 = 8;
+const EfiACPIReclaimMemory: u32 = 9;
+const EfiACPIMemoryNVS: u32 = 10;
+const EfiMemoryMappedIO: u32 = 11;
+const EfiMemoryMappedIOPortSpace: u32 = 12;
+const EfiPalCode: u32 = 13;
+const EfiPersistentMemory: u32 = 14;
+
+// Allocation types
+const AllocateAnyPages: u32 = 0;
+const AllocateMaxAddress: u32 = 1;
+const AllocateAddress: u32 = 2;
+
+// GUID structure
+struct EFI_GUID {
+    Data1: u32,
+    Data2: u16,
+    Data3: u16,
+    Data4: [8]u8,
+}
+
+// Table header
+struct EFI_TABLE_HEADER {
+    Signature: u64,
+    Revision: u32,
+    HeaderSize: u32,
+    CRC32: u32,
+    Reserved: u32,
+}
+
+// Memory descriptor
+struct EFI_MEMORY_DESCRIPTOR {
+    Type: u32,
+    PhysicalStart: EFI_PHYSICAL_ADDRESS,
+    VirtualStart: EFI_VIRTUAL_ADDRESS,
+    NumberOfPages: u64,
+    Attribute: u64,
+}
+
+// Simple text output protocol
+struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
+    Reset: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, bool) -> EFI_STATUS,
+    OutputString: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, *u16) -> EFI_STATUS,
+    TestString: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, *u16) -> EFI_STATUS,
+    QueryMode: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, usize, *usize, *usize) -> EFI_STATUS,
+    SetMode: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, usize) -> EFI_STATUS,
+    SetAttribute: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, usize) -> EFI_STATUS,
+    ClearScreen: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL) -> EFI_STATUS,
+    SetCursorPosition: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, usize, usize) -> EFI_STATUS,
+    EnableCursor: fn(*EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL, bool) -> EFI_STATUS,
+    Mode: *SIMPLE_TEXT_OUTPUT_MODE,
+}
+
+struct SIMPLE_TEXT_OUTPUT_MODE {
+    MaxMode: i32,
+    Mode: i32,
+    Attribute: i32,
+    CursorColumn: i32,
+    CursorRow: i32,
+    CursorVisible: bool,
+}
+
+// Boot services
+struct EFI_BOOT_SERVICES {
+    Hdr: EFI_TABLE_HEADER,
+    
+    // Task Priority Services
+    RaiseTPL: fn(EFI_TPL) -> EFI_TPL,
+    RestoreTPL: fn(EFI_TPL),
+    
+    // Memory Services
+    AllocatePages: fn(u32, u32, usize, *EFI_PHYSICAL_ADDRESS) -> EFI_STATUS,
+    FreePages: fn(EFI_PHYSICAL_ADDRESS, usize) -> EFI_STATUS,
+    GetMemoryMap: fn(*usize, *EFI_MEMORY_DESCRIPTOR, *usize, *usize, *u32) -> EFI_STATUS,
+    AllocatePool: fn(u32, usize, **void) -> EFI_STATUS,
+    FreePool: fn(*void) -> EFI_STATUS,
+    
+    // Event & Timer Services
+    CreateEvent: fn(u32, EFI_TPL, fn(EFI_EVENT, *void), *void, *EFI_EVENT) -> EFI_STATUS,
+    SetTimer: fn(EFI_EVENT, u32, u64) -> EFI_STATUS,
+    WaitForEvent: fn(usize, *EFI_EVENT, *usize) -> EFI_STATUS,
+    SignalEvent: fn(EFI_EVENT) -> EFI_STATUS,
+    CloseEvent: fn(EFI_EVENT) -> EFI_STATUS,
+    CheckEvent: fn(EFI_EVENT) -> EFI_STATUS,
+    
+    // Protocol Handler Services
+    InstallProtocolInterface: fn(*EFI_HANDLE, *EFI_GUID, u32, *void) -> EFI_STATUS,
+    ReinstallProtocolInterface: fn(EFI_HANDLE, *EFI_GUID, *void, *void) -> EFI_STATUS,
+    UninstallProtocolInterface: fn(EFI_HANDLE, *EFI_GUID, *void) -> EFI_STATUS,
+    HandleProtocol: fn(EFI_HANDLE, *EFI_GUID, **void) -> EFI_STATUS,
+    Reserved: *void,
+    RegisterProtocolNotify: fn(*EFI_GUID, EFI_EVENT, **void) -> EFI_STATUS,
+    LocateHandle: fn(u32, *EFI_GUID, *void, *usize, *EFI_HANDLE) -> EFI_STATUS,
+    LocateDevicePath: fn(*EFI_GUID, **void, *EFI_HANDLE) -> EFI_STATUS,
+    InstallConfigurationTable: fn(*EFI_GUID, *void) -> EFI_STATUS,
+    
+    // Image Services
+    LoadImage: fn(bool, EFI_HANDLE, *void, *void, usize, *EFI_HANDLE) -> EFI_STATUS,
+    StartImage: fn(EFI_HANDLE, *usize, **u16) -> EFI_STATUS,
+    Exit: fn(EFI_HANDLE, EFI_STATUS, usize, *u16) -> EFI_STATUS,
+    UnloadImage: fn(EFI_HANDLE) -> EFI_STATUS,
+    ExitBootServices: fn(EFI_HANDLE, usize) -> EFI_STATUS,
+    
+    // Miscellaneous Services
+    GetNextMonotonicCount: fn(*u64) -> EFI_STATUS,
+    Stall: fn(usize) -> EFI_STATUS,
+    SetWatchdogTimer: fn(usize, u64, usize, *u16) -> EFI_STATUS,
+    
+    // DriverSupport Services
+    ConnectController: fn(EFI_HANDLE, *EFI_HANDLE, *void, bool) -> EFI_STATUS,
+    DisconnectController: fn(EFI_HANDLE, EFI_HANDLE, EFI_HANDLE) -> EFI_STATUS,
+    
+    // Open and Close Protocol Services
+    OpenProtocol: fn(EFI_HANDLE, *EFI_GUID, **void, EFI_HANDLE, EFI_HANDLE, u32) -> EFI_STATUS,
+    CloseProtocol: fn(EFI_HANDLE, *EFI_GUID, EFI_HANDLE, EFI_HANDLE) -> EFI_STATUS,
+    OpenProtocolInformation: fn(EFI_HANDLE, *EFI_GUID, **void, *usize) -> EFI_STATUS,
+    
+    // Library Services
+    ProtocolsPerHandle: fn(EFI_HANDLE, ***EFI_GUID, *usize) -> EFI_STATUS,
+    LocateHandleBuffer: fn(u32, *EFI_GUID, *void, *usize, **EFI_HANDLE) -> EFI_STATUS,
+    LocateProtocol: fn(*EFI_GUID, *void, **void) -> EFI_STATUS,
+    
+    // Additional services...
+}
+
+// Runtime services
+struct EFI_RUNTIME_SERVICES {
+    Hdr: EFI_TABLE_HEADER,
+    
+    // Time Services
+    GetTime: fn(*EFI_TIME, *EFI_TIME_CAPABILITIES) -> EFI_STATUS,
+    SetTime: fn(*EFI_TIME) -> EFI_STATUS,
+    GetWakeupTime: fn(*bool, *bool, *EFI_TIME) -> EFI_STATUS,
+    SetWakeupTime: fn(bool, *EFI_TIME) -> EFI_STATUS,
+    
+    // Virtual Memory Services
+    SetVirtualAddressMap: fn(usize, usize, u32, *EFI_MEMORY_DESCRIPTOR) -> EFI_STATUS,
+    ConvertPointer: fn(usize, **void) -> EFI_STATUS,
+    
+    // Variable Services
+    GetVariable: fn(*u16, *EFI_GUID, *u32, *usize, *void) -> EFI_STATUS,
+    GetNextVariableName: fn(*usize, *u16, *EFI_GUID) -> EFI_STATUS,
+    SetVariable: fn(*u16, *EFI_GUID, u32, usize, *void) -> EFI_STATUS,
+    
+    // Miscellaneous Services
+    GetNextHighMonotonicCount: fn(*u32) -> EFI_STATUS,
+    ResetSystem: fn(u32, EFI_STATUS, usize, *void),
+}
+
+// System table
+struct EFI_SYSTEM_TABLE {
+    Hdr: EFI_TABLE_HEADER,
+    FirmwareVendor: *u16,
+    FirmwareRevision: u32,
+    ConsoleInHandle: EFI_HANDLE,
+    ConIn: *EFI_SIMPLE_TEXT_INPUT_PROTOCOL,
+    ConsoleOutHandle: EFI_HANDLE,
+    ConOut: *EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL,
+    StandardErrorHandle: EFI_HANDLE,
+    StdErr: *EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL,
+    RuntimeServices: *EFI_RUNTIME_SERVICES,
+    BootServices: *EFI_BOOT_SERVICES,
+    NumberOfTableEntries: usize,
+    ConfigurationTable: *EFI_CONFIGURATION_TABLE,
+}
+
+struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
+    Reset: fn(*EFI_SIMPLE_TEXT_INPUT_PROTOCOL, bool) -> EFI_STATUS,
+    ReadKeyStroke: fn(*EFI_SIMPLE_TEXT_INPUT_PROTOCOL, *EFI_INPUT_KEY) -> EFI_STATUS,
+    WaitForKey: EFI_EVENT,
+}
+
+struct EFI_INPUT_KEY {
+    ScanCode: u16,
+    UnicodeChar: u16,
+}
+
+struct EFI_CONFIGURATION_TABLE {
+    VendorGuid: EFI_GUID,
+    VendorTable: *void,
+}
+
+struct EFI_TIME {
+    Year: u16,
+    Month: u8,
+    Day: u8,
+    Hour: u8,
+    Minute: u8,
+    Second: u8,
+    Pad1: u8,
+    Nanosecond: u32,
+    TimeZone: i16,
+    Daylight: u8,
+    Pad2: u8,
+}
+
+struct EFI_TIME_CAPABILITIES {
+    Resolution: u32,
+    Accuracy: u32,
+    SetsToZero: bool,
+}
+
+// Graphics Output Protocol
+const EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID: EFI_GUID = {
+    Data1: 0x9042a9de,
+    Data2: 0x23dc,
+    Data3: 0x4a38,
+    Data4: [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a],
+};
+
+struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
+    QueryMode: fn(*EFI_GRAPHICS_OUTPUT_PROTOCOL, u32, *usize, **EFI_GRAPHICS_OUTPUT_MODE_INFORMATION) -> EFI_STATUS,
+    SetMode: fn(*EFI_GRAPHICS_OUTPUT_PROTOCOL, u32) -> EFI_STATUS,
+    Blt: fn(*EFI_GRAPHICS_OUTPUT_PROTOCOL, *EFI_GRAPHICS_OUTPUT_BLT_PIXEL, u32, usize, usize, usize, usize, usize, usize, usize) -> EFI_STATUS,
+    Mode: *EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE,
+}
+
+struct EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE {
+    MaxMode: u32,
+    Mode: u32,
+    Info: *EFI_GRAPHICS_OUTPUT_MODE_INFORMATION,
+    SizeOfInfo: usize,
+    FrameBufferBase: EFI_PHYSICAL_ADDRESS,
+    FrameBufferSize: usize,
+}
+
+struct EFI_GRAPHICS_OUTPUT_MODE_INFORMATION {
+    Version: u32,
+    HorizontalResolution: u32,
+    VerticalResolution: u32,
+    PixelFormat: u32,
+    PixelInformation: EFI_PIXEL_BITMASK,
+    PixelsPerScanLine: u32,
+}
+
+struct EFI_PIXEL_BITMASK {
+    RedMask: u32,
+    GreenMask: u32,
+    BlueMask: u32,
+    ReservedMask: u32,
+}
+
+struct EFI_GRAPHICS_OUTPUT_BLT_PIXEL {
+    Blue: u8,
+    Green: u8,
+    Red: u8,
+    Reserved: u8,
+}
+
+// Pixel formats
+const PixelRedGreenBlueReserved8BitPerColor: u32 = 0;
+const PixelBlueGreenRedReserved8BitPerColor: u32 = 1;
+const PixelBitMask: u32 = 2;
+const PixelBltOnly: u32 = 3;
+
+// File Protocol
+const EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID: EFI_GUID = {
+    Data1: 0x964e5b22,
+    Data2: 0x6459,
+    Data3: 0x11d2,
+    Data4: [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b],
+};
+
+const EFI_FILE_INFO_ID: EFI_GUID = {
+    Data1: 0x09576e92,
+    Data2: 0x6d3f,
+    Data3: 0x11d2,
+    Data4: [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b],
+};
+
+struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
+    Revision: u64,
+    OpenVolume: fn(*EFI_SIMPLE_FILE_SYSTEM_PROTOCOL, **EFI_FILE_PROTOCOL) -> EFI_STATUS,
+}
+
+struct EFI_FILE_PROTOCOL {
+    Revision: u64,
+    Open: fn(*EFI_FILE_PROTOCOL, **EFI_FILE_PROTOCOL, *u16, u64, u64) -> EFI_STATUS,
+    Close: fn(*EFI_FILE_PROTOCOL) -> EFI_STATUS,
+    Delete: fn(*EFI_FILE_PROTOCOL) -> EFI_STATUS,
+    Read: fn(*EFI_FILE_PROTOCOL, *usize, *void) -> EFI_STATUS,
+    Write: fn(*EFI_FILE_PROTOCOL, *usize, *void) -> EFI_STATUS,
+    GetPosition: fn(*EFI_FILE_PROTOCOL, *u64) -> EFI_STATUS,
+    SetPosition: fn(*EFI_FILE_PROTOCOL, u64) -> EFI_STATUS,
+    GetInfo: fn(*EFI_FILE_PROTOCOL, *EFI_GUID, *usize, *void) -> EFI_STATUS,
+    SetInfo: fn(*EFI_FILE_PROTOCOL, *EFI_GUID, usize, *void) -> EFI_STATUS,
+    Flush: fn(*EFI_FILE_PROTOCOL) -> EFI_STATUS,
+}
+
+struct EFI_FILE_INFO {
+    Size: u64,
+    FileSize: u64,
+    PhysicalSize: u64,
+    CreateTime: EFI_TIME,
+    LastAccessTime: EFI_TIME,
+    ModificationTime: EFI_TIME,
+    Attribute: u64,
+    FileName: [1]u16,  // Variable length
+}
+
+// File open modes
+const EFI_FILE_MODE_READ: u64 = 0x0000000000000001;
+const EFI_FILE_MODE_WRITE: u64 = 0x0000000000000002;
+const EFI_FILE_MODE_CREATE: u64 = 0x8000000000000000;
+
+// Wide string literal helper
+macro L(s) {
+    // This would need compiler support for wide string literals
+    // For now, assume it converts ASCII to UTF-16
+    s as *u16
+}

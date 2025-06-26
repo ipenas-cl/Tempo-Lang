@@ -1,0 +1,538 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ===========================================================================
+// TEMPO COMPILER STAGE 2 - ERROR HANDLING
+// ===========================================================================
+// Comprehensive error reporting with helpful diagnostics
+// ===========================================================================
+
+import "lexer.tempo"
+import "ast.tempo"
+
+// ===========================================================================
+// Error types
+// ===========================================================================
+
+enum ErrorKind {
+    // Lexical errors
+    UnexpectedCharacter(char),
+    UnterminatedString,
+    UnterminatedComment,
+    InvalidEscapeSequence(String),
+    InvalidNumericLiteral(String),
+    
+    // Parse errors
+    UnexpectedToken(TokenType, TokenType), // expected, found
+    UnexpectedEOF(String), // what was expected
+    InvalidExpression,
+    InvalidPattern,
+    InvalidType,
+    
+    // Semantic errors
+    UndefinedVariable(String),
+    UndefinedType(String),
+    UndefinedFunction(String),
+    TypeMismatch(String, String), // expected, found
+    ArgumentCountMismatch(usize, usize), // expected, found
+    DuplicateDefinition(String),
+    
+    // WCET errors
+    UnboundedLoop,
+    RecursionWithoutBound,
+    WCETExceeded(TimeBound, TimeBound), // limit, actual
+    
+    // Memory errors
+    MemoryExceeded(u64, u64), // limit, actual
+    StackOverflow,
+    
+    // Trait errors
+    TraitNotImplemented(String, String), // trait, type
+    ConflictingImplementations,
+    
+    // Lifetime errors
+    LifetimeMismatch(String, String),
+    DanglingReference,
+    
+    // Generic errors
+    TooManyTypeArguments(usize, usize), // expected, found
+    TooFewTypeArguments(usize, usize),
+    
+    // Pattern errors
+    NonExhaustivePatterns,
+    UnreachablePattern,
+    
+    // Other errors
+    CircularDependency(Vec<String>),
+    InvalidAttribute(String),
+    FeatureNotSupported(String),
+}
+
+type Error = {
+    kind: ErrorKind,
+    message: String,
+    span: Span,
+    file_id: u32,
+    line: u32,
+    column: u32,
+    notes: Vec<Note>,
+    suggestions: Vec<Suggestion>,
+}
+
+type Note = {
+    message: String,
+    span: Option<Span>,
+}
+
+type Suggestion = {
+    message: String,
+    replacement: String,
+    span: Span,
+}
+
+// ===========================================================================
+// Error reporting
+// ===========================================================================
+
+type ErrorReporter = {
+    errors: Vec<Error>,
+    warnings: Vec<Error>,
+    source_files: Map<u32, SourceFile>,
+    error_limit: usize,
+    color_enabled: bool,
+}
+
+function new_error_reporter() -> ErrorReporter {
+    ErrorReporter {
+        errors: Vec::new(),
+        warnings: Vec::new(),
+        source_files: Map::new(),
+        error_limit: 20,
+        color_enabled: true,
+    }
+}
+
+function report_error(reporter: &mut ErrorReporter, error: Error) {
+    if reporter.errors.len() < reporter.error_limit {
+        reporter.errors.push(error);
+    }
+}
+
+function report_warning(reporter: &mut ErrorReporter, warning: Error) {
+    reporter.warnings.push(warning);
+}
+
+function has_errors(reporter: &ErrorReporter) -> bool {
+    !reporter.errors.is_empty()
+}
+
+function format_error(reporter: &ErrorReporter, error: &Error) -> String {
+    let mut output = String::new();
+    
+    // Error header
+    if reporter.color_enabled {
+        output.push_str(&format!("\x1b[31;1merror[E{:04}]\x1b[0m: ", error_code(&error.kind)));
+    } else {
+        output.push_str(&format!("error[E{:04}]: ", error_code(&error.kind)));
+    }
+    
+    output.push_str(&error.message);
+    output.push('\n');
+    
+    // Source location
+    if let Some(file) = reporter.source_files.get(&error.file_id) {
+        output.push_str(&format!("  --> {}:{}:{}\n", file.name, error.line, error.column));
+        
+        // Show source code context
+        if let Some(line_content) = get_line(&file.content, error.line) {
+            let line_num_str = format!("{}", error.line);
+            let padding = " ".repeat(line_num_str.len());
+            
+            output.push_str(&format!("   {} |\n", padding));
+            output.push_str(&format!("{} | {}\n", line_num_str, line_content));
+            output.push_str(&format!("   {} | ", padding));
+            
+            // Underline the error
+            let underline_start = error.span.start as usize - get_line_start(&file.content, error.line);
+            let underline_len = (error.span.end - error.span.start) as usize;
+            
+            output.push_str(&" ".repeat(underline_start));
+            if reporter.color_enabled {
+                output.push_str("\x1b[31;1m");
+                output.push_str(&"^".repeat(underline_len.max(1)));
+                output.push_str("\x1b[0m");
+            } else {
+                output.push_str(&"^".repeat(underline_len.max(1)));
+            }
+            
+            // Add error message inline if short enough
+            if error.message.len() < 40 {
+                output.push_str(" ");
+                output.push_str(&error.message);
+            }
+            
+            output.push('\n');
+        }
+    }
+    
+    // Add notes
+    for note in &error.notes {
+        output.push_str(&format!("   = note: {}\n", note.message));
+        
+        if let Some(span) = &note.span {
+            // Show additional context for notes
+            if let Some(file) = reporter.source_files.get(&span.file_id) {
+                if let Some((line, col)) = get_line_and_column(&file.content, span.start) {
+                    output.push_str(&format!("          --> {}:{}:{}\n", file.name, line, col));
+                }
+            }
+        }
+    }
+    
+    // Add suggestions
+    for suggestion in &error.suggestions {
+        if reporter.color_enabled {
+            output.push_str(&format!("   \x1b[32mhelp\x1b[0m: {}\n", suggestion.message));
+        } else {
+            output.push_str(&format!("   help: {}\n", suggestion.message));
+        }
+        
+        // Show the suggested replacement
+        if let Some(file) = reporter.source_files.get(&error.file_id) {
+            if let Some((line, _)) = get_line_and_column(&file.content, suggestion.span.start) {
+                if let Some(line_content) = get_line(&file.content, line) {
+                    let mut suggested = line_content.clone();
+                    let start = suggestion.span.start as usize - get_line_start(&file.content, line);
+                    let end = suggestion.span.end as usize - get_line_start(&file.content, line);
+                    
+                    suggested.replace_range(start..end, &suggestion.replacement);
+                    
+                    output.push_str(&format!("        | {}\n", suggested));
+                }
+            }
+        }
+    }
+    
+    output
+}
+
+function print_all_errors(reporter: &ErrorReporter) {
+    for error in &reporter.errors {
+        println!("{}", format_error(reporter, error));
+    }
+    
+    if reporter.errors.len() >= reporter.error_limit {
+        println!("error: too many errors emitted, stopping now");
+    }
+    
+    for warning in &reporter.warnings {
+        let mut formatted = format_error(reporter, warning);
+        if reporter.color_enabled {
+            formatted = formatted.replace("error", "\x1b[33mwarning\x1b[0m");
+        } else {
+            formatted = formatted.replace("error", "warning");
+        }
+        println!("{}", formatted);
+    }
+    
+    // Summary
+    let error_count = reporter.errors.len();
+    let warning_count = reporter.warnings.len();
+    
+    if error_count > 0 {
+        if reporter.color_enabled {
+            println!("\n\x1b[31;1merror\x1b[0m: aborting due to {} previous error{}", 
+                     error_count, 
+                     if error_count == 1 { "" } else { "s" });
+        } else {
+            println!("\nerror: aborting due to {} previous error{}", 
+                     error_count, 
+                     if error_count == 1 { "" } else { "s" });
+        }
+    }
+    
+    if warning_count > 0 {
+        println!("{} warning{} emitted", 
+                 warning_count, 
+                 if warning_count == 1 { "" } else { "s" });
+    }
+}
+
+// ===========================================================================
+// Error creation helpers
+// ===========================================================================
+
+function unexpected_token_error(expected: TokenType, found: Token, span: Span) -> Error {
+    Error {
+        kind: ErrorKind::UnexpectedToken(expected, found.type),
+        message: format!("expected {}, found {}", 
+                        token_type_name(expected), 
+                        token_type_name(found.type)),
+        span,
+        file_id: span.file_id,
+        line: found.line,
+        column: found.column,
+        notes: Vec::new(),
+        suggestions: suggest_token_fix(expected, found.type),
+    }
+}
+
+function type_mismatch_error(expected: &str, found: &str, span: Span, line: u32, column: u32) -> Error {
+    Error {
+        kind: ErrorKind::TypeMismatch(expected.to_string(), found.to_string()),
+        message: format!("type mismatch: expected {}, found {}", expected, found),
+        span,
+        file_id: span.file_id,
+        line,
+        column,
+        notes: vec![
+            Note {
+                message: format!("expected type: {}", expected),
+                span: None,
+            },
+            Note {
+                message: format!("found type: {}", found),
+                span: None,
+            },
+        ],
+        suggestions: Vec::new(),
+    }
+}
+
+function undefined_variable_error(name: &str, span: Span, line: u32, column: u32) -> Error {
+    let suggestions = suggest_similar_names(name);
+    
+    Error {
+        kind: ErrorKind::UndefinedVariable(name.to_string()),
+        message: format!("undefined variable `{}`", name),
+        span,
+        file_id: span.file_id,
+        line,
+        column,
+        notes: Vec::new(),
+        suggestions,
+    }
+}
+
+function wcet_exceeded_error(limit: TimeBound, actual: TimeBound, span: Span, line: u32, column: u32) -> Error {
+    Error {
+        kind: ErrorKind::WCETExceeded(limit, actual),
+        message: format!("WCET constraint violated: limit is {:?}, but analysis shows {:?}", limit, actual),
+        span,
+        file_id: span.file_id,
+        line,
+        column,
+        notes: vec![
+            Note {
+                message: "consider optimizing the algorithm or increasing the WCET limit".to_string(),
+                span: None,
+            },
+        ],
+        suggestions: Vec::new(),
+    }
+}
+
+// ===========================================================================
+// Error code assignment
+// ===========================================================================
+
+function error_code(kind: &ErrorKind) -> u32 {
+    match kind {
+        ErrorKind::UnexpectedCharacter(_) => 1001,
+        ErrorKind::UnterminatedString => 1002,
+        ErrorKind::UnterminatedComment => 1003,
+        ErrorKind::InvalidEscapeSequence(_) => 1004,
+        ErrorKind::InvalidNumericLiteral(_) => 1005,
+        
+        ErrorKind::UnexpectedToken(_, _) => 2001,
+        ErrorKind::UnexpectedEOF(_) => 2002,
+        ErrorKind::InvalidExpression => 2003,
+        ErrorKind::InvalidPattern => 2004,
+        ErrorKind::InvalidType => 2005,
+        
+        ErrorKind::UndefinedVariable(_) => 3001,
+        ErrorKind::UndefinedType(_) => 3002,
+        ErrorKind::UndefinedFunction(_) => 3003,
+        ErrorKind::TypeMismatch(_, _) => 3004,
+        ErrorKind::ArgumentCountMismatch(_, _) => 3005,
+        ErrorKind::DuplicateDefinition(_) => 3006,
+        
+        ErrorKind::UnboundedLoop => 4001,
+        ErrorKind::RecursionWithoutBound => 4002,
+        ErrorKind::WCETExceeded(_, _) => 4003,
+        
+        ErrorKind::MemoryExceeded(_, _) => 5001,
+        ErrorKind::StackOverflow => 5002,
+        
+        ErrorKind::TraitNotImplemented(_, _) => 6001,
+        ErrorKind::ConflictingImplementations => 6002,
+        
+        ErrorKind::LifetimeMismatch(_, _) => 7001,
+        ErrorKind::DanglingReference => 7002,
+        
+        ErrorKind::TooManyTypeArguments(_, _) => 8001,
+        ErrorKind::TooFewTypeArguments(_, _) => 8002,
+        
+        ErrorKind::NonExhaustivePatterns => 9001,
+        ErrorKind::UnreachablePattern => 9002,
+        
+        ErrorKind::CircularDependency(_) => 10001,
+        ErrorKind::InvalidAttribute(_) => 10002,
+        ErrorKind::FeatureNotSupported(_) => 10003,
+    }
+}
+
+// ===========================================================================
+// Suggestion generation
+// ===========================================================================
+
+function suggest_token_fix(expected: TokenType, found: TokenType) -> Vec<Suggestion> {
+    let mut suggestions = Vec::new();
+    
+    // Common typos and fixes
+    match (expected, found) {
+        (TokenType::SEMICOLON, _) => {
+            suggestions.push(Suggestion {
+                message: "add `;` here".to_string(),
+                replacement: ";".to_string(),
+                span: Span { start: 0, end: 0, file_id: 0 }, // Will be filled by caller
+            });
+        }
+        (TokenType::RPAREN, TokenType::COMMA) => {
+            suggestions.push(Suggestion {
+                message: "replace `,` with `)`".to_string(),
+                replacement: ")".to_string(),
+                span: Span { start: 0, end: 0, file_id: 0 },
+            });
+        }
+        _ => {}
+    }
+    
+    suggestions
+}
+
+function suggest_similar_names(name: &str) -> Vec<Suggestion> {
+    // In a real implementation, this would search the symbol table
+    // for similar names using edit distance
+    Vec::new()
+}
+
+// ===========================================================================
+// Utility functions
+// ===========================================================================
+
+function token_type_name(type: TokenType) -> &'static str {
+    match type {
+        TokenType::LPAREN => "`(`",
+        TokenType::RPAREN => "`)`",
+        TokenType::LBRACE => "`{`",
+        TokenType::RBRACE => "`}`",
+        TokenType::LBRACKET => "`[`",
+        TokenType::RBRACKET => "`]`",
+        TokenType::SEMICOLON => "`;`",
+        TokenType::COMMA => "`,`",
+        TokenType::DOT => "`.`",
+        TokenType::COLON => "`:`",
+        TokenType::DOUBLE_COLON => "`::`",
+        TokenType::ARROW => "`->`",
+        TokenType::FAT_ARROW => "`=>`",
+        TokenType::EQUALS => "`=`",
+        TokenType::FUNCTION => "`function`",
+        TokenType::TYPE => "`type`",
+        TokenType::ENUM => "`enum`",
+        TokenType::TRAIT => "`trait`",
+        TokenType::IMPL => "`impl`",
+        TokenType::LET => "`let`",
+        TokenType::IF => "`if`",
+        TokenType::ELSE => "`else`",
+        TokenType::WHILE => "`while`",
+        TokenType::FOR => "`for`",
+        TokenType::LOOP => "`loop`",
+        TokenType::MATCH => "`match`",
+        TokenType::RETURN => "`return`",
+        TokenType::IDENTIFIER => "identifier",
+        TokenType::NUMBER => "number",
+        TokenType::STRING => "string",
+        TokenType::EOF => "end of file",
+        _ => "token",
+    }
+}
+
+function get_line(content: &str, line_num: u32) -> Option<String> {
+    content.lines().nth((line_num - 1) as usize).map(|s| s.to_string())
+}
+
+function get_line_start(content: &str, line_num: u32) -> usize {
+    let mut pos = 0;
+    for (i, line) in content.lines().enumerate() {
+        if i == (line_num - 1) as usize {
+            return pos;
+        }
+        pos += line.len() + 1; // +1 for newline
+    }
+    pos
+}
+
+function get_line_and_column(content: &str, offset: u32) -> Option<(u32, u32)> {
+    let mut line = 1;
+    let mut col = 1;
+    
+    for (i, ch) in content.chars().enumerate() {
+        if i == offset as usize {
+            return Some((line, col));
+        }
+        
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    
+    None
+}
+
+// ===========================================================================
+// Error recovery strategies
+// ===========================================================================
+
+enum RecoveryStrategy {
+    // Skip tokens until we find a synchronization point
+    SkipUntilSync,
+    
+    // Insert a missing token
+    InsertToken(TokenType),
+    
+    // Replace current token with expected
+    ReplaceToken(TokenType),
+    
+    // Skip current token
+    SkipToken,
+    
+    // Try alternative parse path
+    Alternative(fn(&mut Parser) -> Result<Expression, ()>),
+}
+
+function suggest_recovery(error: &ErrorKind) -> RecoveryStrategy {
+    match error {
+        ErrorKind::UnexpectedToken(expected, _) => {
+            match expected {
+                TokenType::SEMICOLON => RecoveryStrategy::InsertToken(TokenType::SEMICOLON),
+                TokenType::RPAREN => RecoveryStrategy::InsertToken(TokenType::RPAREN),
+                TokenType::RBRACE => RecoveryStrategy::InsertToken(TokenType::RBRACE),
+                _ => RecoveryStrategy::SkipUntilSync,
+            }
+        }
+        ErrorKind::InvalidExpression => RecoveryStrategy::SkipUntilSync,
+        _ => RecoveryStrategy::SkipToken,
+    }
+}

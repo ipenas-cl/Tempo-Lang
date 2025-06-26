@@ -1,0 +1,689 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Journal implementation for AtomicFS
+// Provides write-ahead logging for crash consistency
+// All operations are atomic and have bounded execution time
+
+module fs.journal;
+
+import core.types;
+import core.memory;
+import core.atomic;
+
+// Journal configuration
+const JOURNAL_BLOCK_SIZE: u32 = 4096;
+const JOURNAL_MIN_SIZE: u32 = 1024;      // Minimum 1024 blocks
+const JOURNAL_MAX_SIZE: u32 = 65536;     // Maximum 64K blocks
+const MAX_TRANSACTION_SIZE: u32 = 128;    // Max blocks per transaction
+const JOURNAL_MAGIC: u32 = 0x4A524E4C;   // "JRNL"
+
+// Journal header structure
+struct JournalHeader {
+    magic: u32,
+    version: u32,
+    block_size: u32,
+    journal_size: u32,
+    sequence: u64,          // Journal sequence number
+    head: u32,              // Head of circular buffer
+    tail: u32,              // Tail of circular buffer
+    checksum: u32,
+}
+
+// Transaction header
+struct TransactionHeader {
+    magic: u32,             // Transaction magic
+    sequence: u64,          // Transaction sequence number
+    timestamp: u64,         // Transaction timestamp
+    block_count: u32,       // Number of blocks in transaction
+    flags: u32,             // Transaction flags
+    checksum: u32,
+}
+
+// Block descriptor in transaction
+struct BlockDescriptor {
+    block_num: u64,         // Original block number
+    offset: u32,            // Offset in journal
+    size: u32,              // Size of data
+    checksum: u32,          // Block checksum
+}
+
+// Transaction commit block
+struct CommitBlock {
+    magic: u32,             // Commit magic
+    sequence: u64,          // Transaction sequence
+    timestamp: u64,         // Commit timestamp
+    checksum: u32,
+}
+
+// Journal structure
+struct Journal {
+    device: *BlockDevice,
+    start_block: u64,       // First block of journal on device
+    size: u32,              // Size in blocks
+    header: JournalHeader,
+    current_txn: *Transaction,
+    lock: SpinLock,
+    commit_lock: Mutex,     // Ensures single committer
+}
+
+// Active transaction
+struct Transaction {
+    journal: *Journal,
+    sequence: u64,
+    start_time: u64,
+    blocks: [BlockEntry; MAX_TRANSACTION_SIZE],
+    block_count: u32,
+    total_size: u32,
+    committed: bool,
+}
+
+// Block entry in transaction
+struct BlockEntry {
+    block_num: u64,
+    data: *u8,
+    size: u32,
+}
+
+// Transaction magic values
+const TXN_START_MAGIC: u32 = 0x54584E53;    // "TXNS"
+const TXN_COMMIT_MAGIC: u32 = 0x54584E43;   // "TXNC"
+const TXN_ABORT_MAGIC: u32 = 0x54584E41;    // "TXNA"
+
+// Transaction flags
+const TXN_FLAG_SYNC: u32 = 0x01;            // Sync to disk on commit
+const TXN_FLAG_ORDERED: u32 = 0x02;         // Ordered mode
+const TXN_FLAG_WRITEBACK: u32 = 0x04;       // Writeback mode
+
+// Initialize journal
+fn init(journal: *Journal, device: *BlockDevice, start: u64, size: u32) -> Result<void> {
+    if size < JOURNAL_MIN_SIZE || size > JOURNAL_MAX_SIZE {
+        return Err(Error.InvalidSize);
+    }
+    
+    journal.device = device;
+    journal.start_block = start;
+    journal.size = size;
+    journal.current_txn = null;
+    journal.lock.init();
+    journal.commit_lock.init();
+    
+    // Read journal header
+    let header_buf: [u8; JOURNAL_BLOCK_SIZE];
+    device.read_block(start, &header_buf)?;
+    memory.copy(&journal.header, &header_buf, sizeof(JournalHeader));
+    
+    // Verify journal
+    if journal.header.magic != JOURNAL_MAGIC {
+        // Initialize new journal
+        init_new_journal(journal)?;
+    } else {
+        // Verify existing journal
+        verify_journal(journal)?;
+    }
+    
+    return Ok(void);
+}
+
+// Initialize new journal
+fn init_new_journal(journal: *Journal) -> Result<void> {
+    journal.header.magic = JOURNAL_MAGIC;
+    journal.header.version = 1;
+    journal.header.block_size = JOURNAL_BLOCK_SIZE;
+    journal.header.journal_size = journal.size;
+    journal.header.sequence = 0;
+    journal.header.head = 0;
+    journal.header.tail = 0;
+    journal.header.checksum = calculate_header_checksum(&journal.header);
+    
+    // Write header
+    write_journal_header(journal)?;
+    
+    // Clear journal area (bounded by journal size)
+    clear_journal(journal)?;
+    
+    return Ok(void);
+}
+
+// Verify existing journal
+fn verify_journal(journal: *Journal) -> Result<void> {
+    // Check header checksum
+    let calc_checksum = calculate_header_checksum(&journal.header);
+    if calc_checksum != journal.header.checksum {
+        return Err(Error.CorruptedHeader);
+    }
+    
+    // Verify size matches
+    if journal.header.journal_size != journal.size {
+        return Err(Error.SizeMismatch);
+    }
+    
+    return Ok(void);
+}
+
+// Begin new transaction
+fn begin_transaction(journal: *Journal) -> Result<*Transaction> {
+    journal.lock.lock();
+    
+    // Check if transaction already active
+    if journal.current_txn != null {
+        journal.lock.unlock();
+        return Err(Error.TransactionActive);
+    }
+    
+    // Allocate transaction structure
+    let txn = allocate<Transaction>();
+    if txn == null {
+        journal.lock.unlock();
+        return Err(Error.NoMemory);
+    }
+    
+    // Initialize transaction
+    txn.journal = journal;
+    txn.sequence = journal.header.sequence + 1;
+    txn.start_time = get_time();
+    txn.block_count = 0;
+    txn.total_size = 0;
+    txn.committed = false;
+    
+    journal.current_txn = txn;
+    journal.lock.unlock();
+    
+    return Ok(txn);
+}
+
+// Add block to transaction
+fn add_block(txn: *Transaction, block_num: u64, data: *u8, size: u32) -> Result<void> {
+    if txn.committed {
+        return Err(Error.TransactionCommitted);
+    }
+    
+    if txn.block_count >= MAX_TRANSACTION_SIZE {
+        return Err(Error.TransactionTooLarge);
+    }
+    
+    if size > JOURNAL_BLOCK_SIZE {
+        return Err(Error.BlockTooLarge);
+    }
+    
+    // Copy data to transaction buffer
+    let buffer = allocate_array<u8>(size);
+    if buffer == null {
+        return Err(Error.NoMemory);
+    }
+    
+    memory.copy(buffer, data, size);
+    
+    // Add to transaction
+    txn.blocks[txn.block_count].block_num = block_num;
+    txn.blocks[txn.block_count].data = buffer;
+    txn.blocks[txn.block_count].size = size;
+    txn.block_count += 1;
+    txn.total_size += size;
+    
+    return Ok(void);
+}
+
+// Commit transaction with bounded write time
+fn commit_transaction(txn: *Transaction) -> Result<void> {
+    if txn.committed {
+        return Err(Error.TransactionCommitted);
+    }
+    
+    let journal = txn.journal;
+    
+    // Acquire commit lock to ensure single committer
+    journal.commit_lock.lock();
+    
+    // Calculate space needed (bounded by MAX_TRANSACTION_SIZE)
+    let space_needed = calculate_transaction_size(txn);
+    
+    // Check if enough space in journal
+    if !has_space(journal, space_needed) {
+        // Checkpoint journal to free space
+        checkpoint_journal(journal)?;
+        
+        // Check again
+        if !has_space(journal, space_needed) {
+            journal.commit_lock.unlock();
+            return Err(Error.JournalFull);
+        }
+    }
+    
+    // Write transaction to journal (bounded by transaction size)
+    write_transaction(journal, txn)?;
+    
+    // Update journal header
+    journal.lock.lock();
+    journal.header.sequence = txn.sequence;
+    journal.current_txn = null;
+    journal.lock.unlock();
+    
+    // Write updated header
+    write_journal_header(journal)?;
+    
+    // Mark transaction as committed
+    txn.committed = true;
+    
+    journal.commit_lock.unlock();
+    
+    // Free transaction buffers
+    free_transaction(txn);
+    
+    return Ok(void);
+}
+
+// Abort transaction
+fn abort_transaction(txn: *Transaction) -> Result<void> {
+    if txn.committed {
+        return Err(Error.TransactionCommitted);
+    }
+    
+    let journal = txn.journal;
+    
+    journal.lock.lock();
+    if journal.current_txn == txn {
+        journal.current_txn = null;
+    }
+    journal.lock.unlock();
+    
+    // Free transaction buffers
+    free_transaction(txn);
+    
+    return Ok(void);
+}
+
+// Write transaction to journal
+fn write_transaction(journal: *Journal, txn: *Transaction) -> Result<void> {
+    let mut journal_offset = journal.header.head;
+    
+    // Write transaction header
+    let txn_header: TransactionHeader;
+    txn_header.magic = TXN_START_MAGIC;
+    txn_header.sequence = txn.sequence;
+    txn_header.timestamp = get_time();
+    txn_header.block_count = txn.block_count;
+    txn_header.flags = TXN_FLAG_ORDERED;
+    txn_header.checksum = 0;  // Calculate later
+    
+    // Write header block
+    write_journal_block(journal, journal_offset, &txn_header, 
+                       sizeof(TransactionHeader))?;
+    journal_offset = next_journal_offset(journal, journal_offset);
+    
+    // Write block descriptors and data (bounded by block_count)
+    for i in 0..txn.block_count {
+        let block = &txn.blocks[i];
+        
+        // Write descriptor
+        let desc: BlockDescriptor;
+        desc.block_num = block.block_num;
+        desc.offset = journal_offset;
+        desc.size = block.size;
+        desc.checksum = calculate_block_checksum(block.data, block.size);
+        
+        write_journal_block(journal, journal_offset, &desc,
+                           sizeof(BlockDescriptor))?;
+        journal_offset = next_journal_offset(journal, journal_offset);
+        
+        // Write block data
+        write_journal_block(journal, journal_offset, block.data, block.size)?;
+        journal_offset = next_journal_offset(journal, journal_offset);
+    }
+    
+    // Write commit block
+    let commit: CommitBlock;
+    commit.magic = TXN_COMMIT_MAGIC;
+    commit.sequence = txn.sequence;
+    commit.timestamp = get_time();
+    commit.checksum = calculate_commit_checksum(&commit);
+    
+    write_journal_block(journal, journal_offset, &commit,
+                       sizeof(CommitBlock))?;
+    journal_offset = next_journal_offset(journal, journal_offset);
+    
+    // Update head pointer
+    journal.header.head = journal_offset;
+    
+    // Sync journal to disk
+    sync_journal_range(journal, journal.header.tail, journal_offset)?;
+    
+    return Ok(void);
+}
+
+// Replay journal for crash recovery
+fn replay(journal: *Journal) -> Result<void> {
+    // Scan journal from tail to head
+    let mut offset = journal.header.tail;
+    let mut last_sequence: u64 = 0;
+    
+    while offset != journal.header.head {
+        // Read block at offset
+        let block_buf: [u8; JOURNAL_BLOCK_SIZE];
+        read_journal_block(journal, offset, &block_buf)?;
+        
+        // Check if it's a transaction header
+        let header = cast<*TransactionHeader>(&block_buf);
+        if header.magic == TXN_START_MAGIC {
+            // Found transaction start
+            let txn_result = replay_transaction(journal, offset, header.sequence);
+            if txn_result.is_ok() {
+                last_sequence = header.sequence;
+            }
+        }
+        
+        offset = next_journal_offset(journal, offset);
+    }
+    
+    // Update sequence number
+    if last_sequence > journal.header.sequence {
+        journal.header.sequence = last_sequence;
+    }
+    
+    return Ok(void);
+}
+
+// Replay single transaction
+fn replay_transaction(journal: *Journal, start_offset: u32, 
+                     sequence: u64) -> Result<void> {
+    let mut offset = start_offset;
+    
+    // Read transaction header
+    let txn_header: TransactionHeader;
+    read_journal_block(journal, offset, &txn_header)?;
+    offset = next_journal_offset(journal, offset);
+    
+    if txn_header.magic != TXN_START_MAGIC {
+        return Err(Error.InvalidTransaction);
+    }
+    
+    // Allocate space for descriptors and data
+    let descriptors = allocate_array<BlockDescriptor>(txn_header.block_count);
+    let data_blocks = allocate_array<*u8>(txn_header.block_count);
+    
+    // Read all descriptors and data (bounded by block_count)
+    for i in 0..txn_header.block_count {
+        // Read descriptor
+        read_journal_block(journal, offset, &descriptors[i])?;
+        offset = next_journal_offset(journal, offset);
+        
+        // Allocate and read data
+        data_blocks[i] = allocate_array<u8>(descriptors[i].size);
+        read_journal_block(journal, offset, data_blocks[i])?;
+        offset = next_journal_offset(journal, offset);
+        
+        // Verify checksum
+        let checksum = calculate_block_checksum(data_blocks[i], descriptors[i].size);
+        if checksum != descriptors[i].checksum {
+            // Corrupted block - abort replay
+            free_replay_buffers(descriptors, data_blocks, i + 1);
+            return Err(Error.CorruptedBlock);
+        }
+    }
+    
+    // Look for commit block
+    let commit: CommitBlock;
+    read_journal_block(journal, offset, &commit)?;
+    
+    if commit.magic != TXN_COMMIT_MAGIC || commit.sequence != sequence {
+        // Transaction not committed - skip
+        free_replay_buffers(descriptors, data_blocks, txn_header.block_count);
+        return Err(Error.UncommittedTransaction);
+    }
+    
+    // Verify commit checksum
+    if calculate_commit_checksum(&commit) != commit.checksum {
+        free_replay_buffers(descriptors, data_blocks, txn_header.block_count);
+        return Err(Error.CorruptedCommit);
+    }
+    
+    // Apply transaction - write blocks to their original locations
+    for i in 0..txn_header.block_count {
+        journal.device.write_block(descriptors[i].block_num, data_blocks[i])?;
+    }
+    
+    // Free buffers
+    free_replay_buffers(descriptors, data_blocks, txn_header.block_count);
+    
+    return Ok(void);
+}
+
+// Flush journal to ensure all data is on disk
+fn flush(journal: *Journal) -> Result<void> {
+    journal.commit_lock.lock();
+    
+    // Ensure no active transaction
+    if journal.current_txn != null {
+        journal.commit_lock.unlock();
+        return Err(Error.TransactionActive);
+    }
+    
+    // Sync entire journal
+    sync_journal_range(journal, 0, journal.size)?;
+    
+    journal.commit_lock.unlock();
+    
+    return Ok(void);
+}
+
+// Checkpoint journal to free space
+fn checkpoint_journal(journal: *Journal) -> Result<void> {
+    // This would implement journal checkpointing
+    // For now, we'll just move the tail forward
+    
+    // Find oldest uncommitted transaction
+    let new_tail = find_checkpoint_position(journal)?;
+    
+    // Update tail
+    journal.header.tail = new_tail;
+    write_journal_header(journal)?;
+    
+    return Ok(void);
+}
+
+// Helper functions
+
+// Calculate transaction size
+fn calculate_transaction_size(txn: *Transaction) -> u32 {
+    let size = sizeof(TransactionHeader) + sizeof(CommitBlock);
+    size += txn.block_count * sizeof(BlockDescriptor);
+    size += txn.total_size;
+    
+    // Round up to block boundaries
+    return (size + JOURNAL_BLOCK_SIZE - 1) / JOURNAL_BLOCK_SIZE;
+}
+
+// Check if journal has enough space
+fn has_space(journal: *Journal, blocks_needed: u32) -> bool {
+    let used_blocks = calculate_used_blocks(journal);
+    let free_blocks = journal.size - used_blocks - 1; // Reserve one block
+    return free_blocks >= blocks_needed;
+}
+
+// Calculate used blocks in circular buffer
+fn calculate_used_blocks(journal: *Journal) -> u32 {
+    if journal.header.head >= journal.header.tail {
+        return journal.header.head - journal.header.tail;
+    } else {
+        return journal.size - journal.header.tail + journal.header.head;
+    }
+}
+
+// Get next offset in circular journal
+fn next_journal_offset(journal: *Journal, offset: u32) -> u32 {
+    offset += 1;
+    if offset >= journal.size {
+        offset = 0;
+    }
+    return offset;
+}
+
+// Write block to journal
+fn write_journal_block(journal: *Journal, offset: u32, 
+                      data: *void, size: u32) -> Result<void> {
+    let block_num = journal.start_block + offset;
+    
+    if size <= JOURNAL_BLOCK_SIZE {
+        // Single block write
+        let buffer: [u8; JOURNAL_BLOCK_SIZE];
+        memory.zero(&buffer, JOURNAL_BLOCK_SIZE);
+        memory.copy(&buffer, data, size);
+        journal.device.write_block(block_num, &buffer)?;
+    } else {
+        // Multiple blocks needed
+        let blocks_needed = (size + JOURNAL_BLOCK_SIZE - 1) / JOURNAL_BLOCK_SIZE;
+        let data_ptr = cast<*u8>(data);
+        
+        for i in 0..blocks_needed {
+            let bytes_to_write = min(JOURNAL_BLOCK_SIZE, size - i * JOURNAL_BLOCK_SIZE);
+            let buffer: [u8; JOURNAL_BLOCK_SIZE];
+            memory.zero(&buffer, JOURNAL_BLOCK_SIZE);
+            memory.copy(&buffer, data_ptr + i * JOURNAL_BLOCK_SIZE, bytes_to_write);
+            journal.device.write_block(block_num + i, &buffer)?;
+        }
+    }
+    
+    return Ok(void);
+}
+
+// Read block from journal
+fn read_journal_block(journal: *Journal, offset: u32, buffer: *u8) -> Result<void> {
+    let block_num = journal.start_block + offset;
+    return journal.device.read_block(block_num, buffer);
+}
+
+// Sync journal range to disk
+fn sync_journal_range(journal: *Journal, start: u32, end: u32) -> Result<void> {
+    // Calculate block range
+    let start_block = journal.start_block + start;
+    let end_block = journal.start_block + end;
+    
+    if end >= start {
+        // Contiguous range
+        journal.device.sync_range(start_block, end_block)?;
+    } else {
+        // Wrapped around - sync in two parts
+        journal.device.sync_range(start_block, journal.start_block + journal.size)?;
+        journal.device.sync_range(journal.start_block, end_block)?;
+    }
+    
+    return Ok(void);
+}
+
+// Write journal header
+fn write_journal_header(journal: *Journal) -> Result<void> {
+    journal.header.checksum = calculate_header_checksum(&journal.header);
+    
+    let header_buf: [u8; JOURNAL_BLOCK_SIZE];
+    memory.zero(&header_buf, JOURNAL_BLOCK_SIZE);
+    memory.copy(&header_buf, &journal.header, sizeof(JournalHeader));
+    
+    return journal.device.write_block(journal.start_block, &header_buf);
+}
+
+// Clear journal area
+fn clear_journal(journal: *Journal) -> Result<void> {
+    let zero_block: [u8; JOURNAL_BLOCK_SIZE];
+    memory.zero(&zero_block, JOURNAL_BLOCK_SIZE);
+    
+    // Clear all journal blocks except header
+    for i in 1..journal.size {
+        journal.device.write_block(journal.start_block + i, &zero_block)?;
+    }
+    
+    return Ok(void);
+}
+
+// Free transaction buffers
+fn free_transaction(txn: *Transaction) {
+    for i in 0..txn.block_count {
+        if txn.blocks[i].data != null {
+            free(txn.blocks[i].data);
+        }
+    }
+    free(txn);
+}
+
+// Free replay buffers
+fn free_replay_buffers(descriptors: *BlockDescriptor, data: **u8, count: u32) {
+    for i in 0..count {
+        if data[i] != null {
+            free(data[i]);
+        }
+    }
+    free(descriptors);
+    free(data);
+}
+
+// Calculate checksums
+fn calculate_header_checksum(header: *JournalHeader) -> u32 {
+    // Save and clear checksum field
+    let saved_checksum = header.checksum;
+    header.checksum = 0;
+    
+    // Calculate CRC32
+    let checksum = crc32(cast<*u8>(header), sizeof(JournalHeader));
+    
+    // Restore checksum field
+    header.checksum = saved_checksum;
+    
+    return checksum;
+}
+
+fn calculate_block_checksum(data: *u8, size: u32) -> u32 {
+    return crc32(data, size);
+}
+
+fn calculate_commit_checksum(commit: *CommitBlock) -> u32 {
+    // Save and clear checksum field
+    let saved_checksum = commit.checksum;
+    commit.checksum = 0;
+    
+    // Calculate CRC32
+    let checksum = crc32(cast<*u8>(commit), sizeof(CommitBlock));
+    
+    // Restore checksum field  
+    commit.checksum = saved_checksum;
+    
+    return checksum;
+}
+
+// Find checkpoint position
+fn find_checkpoint_position(journal: *Journal) -> Result<u32> {
+    // Scan journal to find oldest active transaction
+    // For simplicity, we'll just advance tail by 25% if possible
+    let used_blocks = calculate_used_blocks(journal);
+    let checkpoint_blocks = used_blocks / 4;
+    
+    let new_tail = journal.header.tail + checkpoint_blocks;
+    if new_tail >= journal.size {
+        new_tail -= journal.size;
+    }
+    
+    return Ok(new_tail);
+}
+
+// Error types
+enum Error {
+    InvalidSize,
+    CorruptedHeader,
+    SizeMismatch,
+    TransactionActive,
+    TransactionCommitted,
+    TransactionTooLarge,
+    BlockTooLarge,
+    NoMemory,
+    JournalFull,
+    InvalidTransaction,
+    CorruptedBlock,
+    CorruptedCommit,
+    UncommittedTransaction,
+}

@@ -1,0 +1,484 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Advanced Deterministic Scheduler
+// Implements a multi-level feedback queue with real-time support
+
+module kernel.process.scheduler
+
+import kernel.process.process
+import kernel.drivers.timer
+
+// Scheduler state
+struct Scheduler {
+    // Multi-level ready queues
+    ready_queues: [NUM_PRIORITIES]ProcessQueue
+    
+    // Real-time process queue
+    realtime_queue: ProcessQueue
+    
+    // Blocked and sleeping queues
+    blocked_queue: ProcessQueue
+    sleeping_queue: ProcessQueue
+    
+    // Statistics
+    total_switches: u64
+    idle_time: u64
+    
+    // Configuration
+    quantum_ms: [NUM_PRIORITIES]u32  // Time quantum per priority
+    boost_interval: u64              // Priority boost interval
+    last_boost: u64                  // Last boost timestamp
+    
+    // CPU affinity and load balancing (for multi-core)
+    cpu_loads: [MAX_CPUS]u32
+    cpu_count: u32
+    
+    lock: SpinLock
+}
+
+// Process queue implementation
+struct ProcessQueue {
+    processes: []*Process
+    head: usize
+    tail: usize
+    count: u32
+    capacity: usize
+}
+
+const NUM_PRIORITIES = 5    // Number of priority levels
+const MAX_CPUS = 64        // Maximum supported CPUs
+const DEFAULT_QUANTUM = 10 // Default time slice in ms
+const BOOST_INTERVAL = 1000 // Boost priorities every second
+
+// Initialize scheduler
+@export
+fn init() -> *Scheduler {
+    let sched = alloc(Scheduler)
+    
+    // Initialize ready queues
+    for i in 0..NUM_PRIORITIES {
+        sched.ready_queues[i] = ProcessQueue{
+            capacity: 256,
+            processes: alloc([]*Process, 256),
+            head: 0,
+            tail: 0,
+            count: 0
+        }
+        
+        // Set time quantum based on priority
+        // Higher priority = shorter quantum for responsiveness
+        sched.quantum_ms[i] = DEFAULT_QUANTUM * (NUM_PRIORITIES - i)
+    }
+    
+    // Initialize special queues
+    sched.realtime_queue = ProcessQueue{
+        capacity: 64,
+        processes: alloc([]*Process, 64),
+        head: 0,
+        tail: 0,
+        count: 0
+    }
+    
+    sched.blocked_queue = ProcessQueue{
+        capacity: 512,
+        processes: alloc([]*Process, 512),
+        head: 0,
+        tail: 0,
+        count: 0
+    }
+    
+    sched.sleeping_queue = ProcessQueue{
+        capacity: 256,
+        processes: alloc([]*Process, 256),
+        head: 0,
+        tail: 0,
+        count: 0
+    }
+    
+    // Set configuration
+    sched.boost_interval = BOOST_INTERVAL
+    sched.last_boost = timer.get_system_time()
+    
+    // Detect CPUs
+    sched.cpu_count = detect_cpu_count()
+    
+    sched.lock = SpinLock{}
+    
+    return sched
+}
+
+// Main scheduling function
+@export
+fn schedule() -> *Process {
+    let sched = get_scheduler()
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Update current process state
+    let current = process.get_current_process()
+    if current != null && current.state == ProcessState.Running {
+        current.state = ProcessState.Ready
+        
+        // Decrease time slice
+        if current.time_slice > 0 {
+            current.time_slice--
+        }
+        
+        // If time slice exhausted, move to lower priority
+        if current.time_slice == 0 && current.priority > PRIORITY_LOW {
+            current.priority--
+            current.time_slice = sched.quantum_ms[current.priority]
+        }
+        
+        // Re-queue if still ready
+        if current.state == ProcessState.Ready {
+            enqueue_process(sched, current)
+        }
+    }
+    
+    // Handle sleeping processes
+    wake_sleeping_processes(sched)
+    
+    // Periodic priority boost to prevent starvation
+    if should_boost_priorities(sched) {
+        boost_priorities(sched)
+    }
+    
+    // Select next process
+    let next = select_next_process(sched)
+    
+    if next != null {
+        next.state = ProcessState.Running
+        sched.total_switches++
+    } else {
+        // No runnable processes
+        sched.idle_time++
+    }
+    
+    return next
+}
+
+// Select next process to run
+fn select_next_process(sched: *Scheduler) -> *Process {
+    // Check real-time queue first
+    let proc = dequeue(&sched.realtime_queue)
+    if proc != null {
+        return proc
+    }
+    
+    // Check priority queues in order
+    for i in (NUM_PRIORITIES - 1)..0 {
+        proc = dequeue(&sched.ready_queues[i])
+        if proc != null {
+            return proc
+        }
+    }
+    
+    // Return idle process if nothing else
+    return process.get_process(0)  // PID 0 is idle
+}
+
+// Add process to scheduler
+@export
+fn add_process(proc: *Process) {
+    let sched = get_scheduler()
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Set initial time slice
+    proc.time_slice = sched.quantum_ms[proc.priority]
+    
+    enqueue_process(sched, proc)
+}
+
+// Remove process from scheduler
+@export
+fn remove_process(pid: u32) {
+    let sched = get_scheduler()
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Remove from all queues
+    remove_from_queue(&sched.realtime_queue, pid)
+    
+    for i in 0..NUM_PRIORITIES {
+        remove_from_queue(&sched.ready_queues[i], pid)
+    }
+    
+    remove_from_queue(&sched.blocked_queue, pid)
+    remove_from_queue(&sched.sleeping_queue, pid)
+}
+
+// Enqueue process based on state and priority
+fn enqueue_process(sched: *Scheduler, proc: *Process) {
+    match proc.state {
+        ProcessState.Ready -> {
+            if proc.priority == PRIORITY_REALTIME {
+                enqueue(&sched.realtime_queue, proc)
+            } else {
+                enqueue(&sched.ready_queues[proc.priority], proc)
+            }
+        }
+        ProcessState.Blocked -> {
+            enqueue(&sched.blocked_queue, proc)
+        }
+        ProcessState.Sleeping -> {
+            enqueue(&sched.sleeping_queue, proc)
+        }
+        _ -> {
+            // Don't queue new, running, zombie, or terminated
+        }
+    }
+}
+
+// Wake sleeping processes that are ready
+fn wake_sleeping_processes(sched: *Scheduler) {
+    let current_time = timer.get_system_time()
+    let queue = &sched.sleeping_queue
+    
+    // Check all sleeping processes
+    let count = queue.count
+    for i in 0..count {
+        let proc = queue.processes[(queue.head + i) % queue.capacity]
+        if proc != null && proc.sleep_until <= current_time {
+            // Wake up process
+            proc.state = ProcessState.Ready
+            proc.sleep_until = 0
+            
+            // Remove from sleeping queue
+            remove_from_queue(queue, proc.pid)
+            
+            // Add to ready queue
+            enqueue_process(sched, proc)
+        }
+    }
+}
+
+// Check if it's time to boost priorities
+fn should_boost_priorities(sched: *Scheduler) -> bool {
+    let current_time = timer.get_system_time()
+    return (current_time - sched.last_boost) >= sched.boost_interval
+}
+
+// Boost priorities to prevent starvation
+fn boost_priorities(sched: *Scheduler) {
+    // Move all processes to highest priority queue
+    for i in 0..(NUM_PRIORITIES - 1) {
+        while sched.ready_queues[i].count > 0 {
+            let proc = dequeue(&sched.ready_queues[i])
+            if proc != null && proc.priority != PRIORITY_REALTIME {
+                proc.priority = PRIORITY_HIGH
+                proc.time_slice = sched.quantum_ms[PRIORITY_HIGH]
+                enqueue(&sched.ready_queues[PRIORITY_HIGH], proc)
+            }
+        }
+    }
+    
+    sched.last_boost = timer.get_system_time()
+}
+
+// Get process count
+@export
+fn get_process_count() -> u32 {
+    let sched = get_scheduler()
+    let count: u32 = 0
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Count processes in all queues
+    count += sched.realtime_queue.count
+    
+    for i in 0..NUM_PRIORITIES {
+        count += sched.ready_queues[i].count
+    }
+    
+    count += sched.blocked_queue.count
+    count += sched.sleeping_queue.count
+    
+    return count
+}
+
+// Get zombie processes for reaping
+@export
+fn get_zombie_processes() -> []*Process {
+    let zombies: []*Process = []
+    
+    // Scan all processes looking for zombies
+    for i in 0..process.MAX_PROCESSES {
+        let proc = process.proc_manager.processes[i]
+        if proc != null && proc.state == ProcessState.Zombie {
+            zombies.push(proc)
+        }
+    }
+    
+    return zombies
+}
+
+// Update blocked process state
+@export
+fn unblock_process(pid: u32) {
+    let sched = get_scheduler()
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Find in blocked queue
+    let proc = find_in_queue(&sched.blocked_queue, pid)
+    if proc != null {
+        proc.state = ProcessState.Ready
+        remove_from_queue(&sched.blocked_queue, pid)
+        enqueue_process(sched, proc)
+    }
+}
+
+// Block current process on resource
+@export
+fn block_current(reason: BlockReason) {
+    let proc = process.get_current_process()
+    proc.state = ProcessState.Blocked
+    
+    // TODO: Track blocking reason for debugging
+    
+    process.yield()
+}
+
+// Load balancing for multi-core systems
+@export
+fn balance_load() {
+    let sched = get_scheduler()
+    
+    if sched.cpu_count <= 1 {
+        return
+    }
+    
+    sched.lock.acquire()
+    defer sched.lock.release()
+    
+    // Calculate average load
+    let total_load: u32 = 0
+    for i in 0..sched.cpu_count {
+        total_load += sched.cpu_loads[i]
+    }
+    let avg_load = total_load / sched.cpu_count
+    
+    // Migrate processes from overloaded to underloaded CPUs
+    for i in 0..sched.cpu_count {
+        if sched.cpu_loads[i] > avg_load + 2 {
+            // This CPU is overloaded, migrate some processes
+            // TODO: Implement process migration
+        }
+    }
+}
+
+// Queue operations
+fn enqueue(queue: *ProcessQueue, proc: *Process) {
+    if queue.count >= queue.capacity {
+        // Queue full, expand it
+        expand_queue(queue)
+    }
+    
+    queue.processes[queue.tail] = proc
+    queue.tail = (queue.tail + 1) % queue.capacity
+    queue.count++
+}
+
+fn dequeue(queue: *ProcessQueue) -> *Process {
+    if queue.count == 0 {
+        return null
+    }
+    
+    let proc = queue.processes[queue.head]
+    queue.processes[queue.head] = null
+    queue.head = (queue.head + 1) % queue.capacity
+    queue.count--
+    
+    return proc
+}
+
+fn remove_from_queue(queue: *ProcessQueue, pid: u32) {
+    let new_processes = alloc([]*Process, queue.capacity)
+    let new_count: u32 = 0
+    
+    // Copy all except the one to remove
+    for i in 0..queue.count {
+        let idx = (queue.head + i) % queue.capacity
+        let proc = queue.processes[idx]
+        if proc != null && proc.pid != pid {
+            new_processes[new_count] = proc
+            new_count++
+        }
+    }
+    
+    // Replace queue contents
+    free(queue.processes)
+    queue.processes = new_processes
+    queue.head = 0
+    queue.tail = new_count
+    queue.count = new_count
+}
+
+fn find_in_queue(queue: *ProcessQueue, pid: u32) -> *Process {
+    for i in 0..queue.count {
+        let idx = (queue.head + i) % queue.capacity
+        let proc = queue.processes[idx]
+        if proc != null && proc.pid == pid {
+            return proc
+        }
+    }
+    return null
+}
+
+fn expand_queue(queue: *ProcessQueue) {
+    let new_capacity = queue.capacity * 2
+    let new_processes = alloc([]*Process, new_capacity)
+    
+    // Copy existing processes
+    for i in 0..queue.count {
+        let idx = (queue.head + i) % queue.capacity
+        new_processes[i] = queue.processes[idx]
+    }
+    
+    free(queue.processes)
+    queue.processes = new_processes
+    queue.capacity = new_capacity
+    queue.head = 0
+    queue.tail = queue.count
+}
+
+// Get scheduler instance
+fn get_scheduler() -> *Scheduler {
+    return kernel.kernel_state.scheduler
+}
+
+// CPU detection
+@extern fn detect_cpu_count() -> u32
+
+// Block reasons
+enum BlockReason {
+    IO
+    Mutex
+    Semaphore
+    Channel
+    Signal
+    Other
+}
+
+// Priority levels (matches process.tempo)
+const PRIORITY_IDLE = 0
+const PRIORITY_LOW = 1
+const PRIORITY_NORMAL = 2
+const PRIORITY_HIGH = 3
+const PRIORITY_REALTIME = 4

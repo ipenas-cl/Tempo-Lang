@@ -1,0 +1,347 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// TempoCore Cache and Memory System
+// Deterministic memory access with scratchpad and optional direct-mapped cache
+
+module tempcore_cache {
+    import tempcore_isa::*;
+    
+    // Memory Configuration
+    const MEMORY_SIZE: u64 = 1 << 30;           // 1GB main memory
+    const SCRATCHPAD_SIZE: u64 = 1 << 16;       // 64KB scratchpad
+    const CACHE_SIZE: u64 = 1 << 15;            // 32KB cache (optional)
+    const CACHE_LINE_SIZE: u64 = 64;            // 64-byte cache lines
+    const CACHE_LINES: u64 = CACHE_SIZE / CACHE_LINE_SIZE;
+    
+    // Memory Regions
+    enum MemoryRegion {
+        Scratchpad = 0x00000000,  // 0x00000000 - 0x0000FFFF (64KB)
+        Code = 0x00010000,        // 0x00010000 - 0x00FFFFFF (16MB - 64KB)
+        Data = 0x01000000,        // 0x01000000 - 0x3FFFFFFF (1GB - 16MB)
+        MMIO = 0x40000000,        // 0x40000000 - 0x7FFFFFFF (1GB)
+        Invalid = 0x80000000,     // 0x80000000+ (invalid)
+    }
+    
+    // Scratchpad Memory (always 1-cycle access)
+    struct Scratchpad {
+        data: [u8; SCRATCHPAD_SIZE],
+        access_count: u64,
+    }
+    
+    impl Scratchpad {
+        fn new() -> Self {
+            Scratchpad {
+                data: [0; SCRATCHPAD_SIZE],
+                access_count: 0,
+            }
+        }
+        
+        fn read(&mut self, addr: u64) -> u64 {
+            self.access_count += 1;
+            let offset = (addr & (SCRATCHPAD_SIZE - 1)) as usize;
+            let mut value = 0u64;
+            for i in 0..8 {
+                value |= (self.data[offset + i] as u64) << (i * 8);
+            }
+            value
+        }
+        
+        fn write(&mut self, addr: u64, value: u64) {
+            self.access_count += 1;
+            let offset = (addr & (SCRATCHPAD_SIZE - 1)) as usize;
+            for i in 0..8 {
+                self.data[offset + i] = ((value >> (i * 8)) & 0xFF) as u8;
+            }
+        }
+    }
+    
+    // Direct-Mapped Cache (optional, deterministic 2-cycle on hit)
+    struct DirectMappedCache {
+        valid: [bool; CACHE_LINES as usize],
+        tags: [u64; CACHE_LINES as usize],
+        data: [[u8; CACHE_LINE_SIZE as usize]; CACHE_LINES as usize],
+        enabled: bool,
+        hit_count: u64,
+        miss_count: u64,
+    }
+    
+    impl DirectMappedCache {
+        fn new() -> Self {
+            DirectMappedCache {
+                valid: [false; CACHE_LINES as usize],
+                tags: [0; CACHE_LINES as usize],
+                data: [[0; CACHE_LINE_SIZE as usize]; CACHE_LINES as usize],
+                enabled: false,  // Disabled by default for determinism
+                hit_count: 0,
+                miss_count: 0,
+            }
+        }
+        
+        fn get_index(addr: u64) -> usize {
+            ((addr / CACHE_LINE_SIZE) % CACHE_LINES) as usize
+        }
+        
+        fn get_tag(addr: u64) -> u64 {
+            addr / (CACHE_LINE_SIZE * CACHE_LINES)
+        }
+        
+        fn get_offset(addr: u64) -> usize {
+            (addr % CACHE_LINE_SIZE) as usize
+        }
+        
+        fn lookup(&self, addr: u64) -> Option<u64> {
+            if !self.enabled {
+                return None;
+            }
+            
+            let index = Self::get_index(addr);
+            let tag = Self::get_tag(addr);
+            
+            if self.valid[index] && self.tags[index] == tag {
+                // Cache hit
+                let offset = Self::get_offset(addr);
+                let mut value = 0u64;
+                for i in 0..8 {
+                    value |= (self.data[index][offset + i] as u64) << (i * 8);
+                }
+                Some(value)
+            } else {
+                // Cache miss
+                None
+            }
+        }
+        
+        fn insert(&mut self, addr: u64, line_data: &[u8]) {
+            if !self.enabled {
+                return;
+            }
+            
+            let index = Self::get_index(addr);
+            let tag = Self::get_tag(addr);
+            
+            self.valid[index] = true;
+            self.tags[index] = tag;
+            self.data[index].copy_from_slice(line_data);
+        }
+        
+        fn invalidate(&mut self, addr: u64) {
+            if !self.enabled {
+                return;
+            }
+            
+            let index = Self::get_index(addr);
+            self.valid[index] = false;
+        }
+        
+        fn flush(&mut self) {
+            self.valid = [false; CACHE_LINES as usize];
+            self.hit_count = 0;
+            self.miss_count = 0;
+        }
+    }
+    
+    // Main Memory (always 2-cycle access when cache disabled)
+    struct MainMemory {
+        data: Vec<u8>,
+    }
+    
+    impl MainMemory {
+        fn new() -> Self {
+            MainMemory {
+                data: vec![0; MEMORY_SIZE as usize],
+            }
+        }
+        
+        fn read(&self, addr: u64) -> u64 {
+            let mut value = 0u64;
+            for i in 0..8 {
+                value |= (self.data[(addr + i) as usize] as u64) << (i * 8);
+            }
+            value
+        }
+        
+        fn write(&mut self, addr: u64, value: u64) {
+            for i in 0..8 {
+                self.data[(addr + i) as usize] = ((value >> (i * 8)) & 0xFF) as u8;
+            }
+        }
+        
+        fn read_line(&self, addr: u64) -> [u8; CACHE_LINE_SIZE as usize] {
+            let aligned_addr = (addr / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let mut line = [0u8; CACHE_LINE_SIZE as usize];
+            for i in 0..CACHE_LINE_SIZE {
+                line[i as usize] = self.data[(aligned_addr + i) as usize];
+            }
+            line
+        }
+    }
+    
+    // Memory System
+    pub struct Memory {
+        scratchpad: Scratchpad,
+        cache: DirectMappedCache,
+        main_memory: MainMemory,
+        cycle_count: u64,
+        deterministic_mode: bool,
+    }
+    
+    impl Memory {
+        pub fn new() -> Self {
+            Memory {
+                scratchpad: Scratchpad::new(),
+                cache: DirectMappedCache::new(),
+                main_memory: MainMemory::new(),
+                cycle_count: 0,
+                deterministic_mode: true,  // Always deterministic by default
+            }
+        }
+        
+        fn get_region(addr: u64) -> MemoryRegion {
+            match addr {
+                0x00000000..=0x0000FFFF => MemoryRegion::Scratchpad,
+                0x00010000..=0x00FFFFFF => MemoryRegion::Code,
+                0x01000000..=0x3FFFFFFF => MemoryRegion::Data,
+                0x40000000..=0x7FFFFFFF => MemoryRegion::MMIO,
+                _ => MemoryRegion::Invalid,
+            }
+        }
+        
+        pub fn read_data(&mut self, addr: u64) -> u64 {
+            self.cycle_count += match Self::get_region(addr) {
+                MemoryRegion::Scratchpad => {
+                    // Scratchpad: always 1 cycle
+                    1
+                },
+                MemoryRegion::Code | MemoryRegion::Data => {
+                    // Main memory: 2 cycles (deterministic)
+                    if self.deterministic_mode || !self.cache.enabled {
+                        2
+                    } else {
+                        // Cache enabled (non-deterministic mode only)
+                        if let Some(value) = self.cache.lookup(addr) {
+                            self.cache.hit_count += 1;
+                            return value;  // 2 cycles on hit
+                        } else {
+                            self.cache.miss_count += 1;
+                            let line = self.main_memory.read_line(addr);
+                            self.cache.insert(addr, &line);
+                            10  // 10 cycles on miss
+                        }
+                    }
+                },
+                MemoryRegion::MMIO => {
+                    // MMIO: always 4 cycles
+                    4
+                },
+                MemoryRegion::Invalid => {
+                    // Invalid: 1 cycle (will trap)
+                    1
+                },
+            };
+            
+            match Self::get_region(addr) {
+                MemoryRegion::Scratchpad => self.scratchpad.read(addr),
+                MemoryRegion::Code | MemoryRegion::Data => self.main_memory.read(addr),
+                MemoryRegion::MMIO => 0,  // Placeholder for MMIO
+                MemoryRegion::Invalid => 0,  // Will cause exception
+            }
+        }
+        
+        pub fn write_data(&mut self, addr: u64, value: u64) {
+            self.cycle_count += match Self::get_region(addr) {
+                MemoryRegion::Scratchpad => 1,
+                MemoryRegion::Code | MemoryRegion::Data => {
+                    if !self.deterministic_mode && self.cache.enabled {
+                        self.cache.invalidate(addr);  // Write-through
+                    }
+                    2
+                },
+                MemoryRegion::MMIO => 4,
+                MemoryRegion::Invalid => 1,
+            };
+            
+            match Self::get_region(addr) {
+                MemoryRegion::Scratchpad => self.scratchpad.write(addr, value),
+                MemoryRegion::Code | MemoryRegion::Data => self.main_memory.write(addr, value),
+                MemoryRegion::MMIO => {},  // Placeholder for MMIO
+                MemoryRegion::Invalid => {},  // Will cause exception
+            }
+        }
+        
+        pub fn read_instruction(&mut self, addr: u64) -> u32 {
+            // Instructions are always 4 bytes, always from code region
+            // Always 2 cycles in deterministic mode
+            self.cycle_count += 2;
+            
+            let value = if Self::get_region(addr) == MemoryRegion::Code {
+                self.main_memory.read(addr) as u32
+            } else {
+                0  // Invalid instruction
+            };
+            
+            value
+        }
+        
+        pub fn read_scratchpad(&mut self, addr: u64) -> u64 {
+            self.scratchpad.read(addr)
+        }
+        
+        pub fn write_scratchpad(&mut self, addr: u64, value: u64) {
+            self.scratchpad.write(addr, value)
+        }
+        
+        pub fn enable_cache(&mut self, enable: bool) {
+            // Only allow in non-deterministic mode
+            if !self.deterministic_mode {
+                self.cache.enabled = enable;
+                if !enable {
+                    self.cache.flush();
+                }
+            }
+        }
+        
+        pub fn set_deterministic_mode(&mut self, deterministic: bool) {
+            self.deterministic_mode = deterministic;
+            if deterministic {
+                self.cache.enabled = false;
+                self.cache.flush();
+            }
+        }
+        
+        pub fn get_stats(&self) -> MemoryStats {
+            MemoryStats {
+                scratchpad_accesses: self.scratchpad.access_count,
+                cache_hits: self.cache.hit_count,
+                cache_misses: self.cache.miss_count,
+                total_cycles: self.cycle_count,
+            }
+        }
+    }
+    
+    // Memory Statistics
+    struct MemoryStats {
+        scratchpad_accesses: u64,
+        cache_hits: u64,
+        cache_misses: u64,
+        total_cycles: u64,
+    }
+    
+    // Memory allocation for scratchpad
+    pub fn allocate_scratchpad(size: u64) -> Result<u64, &'static str> {
+        if size > SCRATCHPAD_SIZE {
+            Err("Requested size exceeds scratchpad capacity")
+        } else {
+            // Simple allocation from start of scratchpad
+            Ok(0)
+        }
+    }
+}

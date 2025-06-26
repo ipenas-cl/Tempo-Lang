@@ -1,0 +1,478 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ===========================================================================
+// TEMPO COMPILER STAGE 2 - PARSER EXAMPLE
+// ===========================================================================
+// Comprehensive example showcasing all parser features
+// ===========================================================================
+
+import "parser.tempo"
+import "ast.tempo"
+import "errors.tempo"
+
+// ===========================================================================
+// Example: Parse and pretty-print a complex Tempo program
+// ===========================================================================
+
+function main() {
+    // Complex Tempo program showcasing all features
+    let source = "
+// Import statements
+import \"std/io.tempo\"
+import \"std/collections.tempo\" { Vec, HashMap }
+
+// Export statements  
+export parseProgram as parse;
+export { AST, Parser };
+
+// Generic type with traits
+type Result<T, E> = enum {
+    Ok(T),
+    Err(E),
+}
+
+// Trait definition with associated types and WCET bounds
+trait Iterator {
+    type Item;
+    
+    function next(&mut self) -> Option<Self::Item> within O(1);
+    function collect<C: FromIterator<Self::Item>>(self) -> C;
+}
+
+// Complex struct with generics and attributes
+#[repr(C)]
+#[derive(Debug, Clone)]
+public type Parser<'a, T: Token> = {
+    tokens: &'a [T],
+    position: usize,
+    errors: Vec<ParseError>,
+    config: ParserConfig,
+}
+
+// Implementation with where clause
+impl<'a, T> Parser<'a, T> 
+where 
+    T: Token + Clone,
+    'a: 'static
+{
+    // Method with WCET annotation
+    public function new(tokens: &'a [T]) -> Self within 100 cycles {
+        Parser {
+            tokens,
+            position: 0,
+            errors: Vec::new(),
+            config: ParserConfig::default(),
+        }
+    }
+    
+    // Async method with pattern matching
+    async function parse_expression(&mut self) -> Result<Expression, ParseError> {
+        match self.current_token() {
+            Some(Token::Number(n)) => {
+                self.advance();
+                Ok(Expression::Literal(Literal::Number(n)))
+            }
+            Some(Token::Identifier(name)) => {
+                self.advance();
+                Ok(Expression::Variable(name))
+            }
+            Some(Token::LeftParen) => {
+                self.advance();
+                let expr = await self.parse_expression()?;
+                self.expect(Token::RightParen)?;
+                Ok(expr)
+            }
+            _ => Err(ParseError::UnexpectedToken),
+        }
+    }
+    
+    // Function with complex pattern matching
+    function parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.current_token() {
+            // Wildcard pattern
+            Some(Token::Underscore) => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            
+            // Tuple pattern
+            Some(Token::LeftParen) => {
+                self.advance();
+                let mut patterns = Vec::new();
+                
+                while !self.check(Token::RightParen) {
+                    patterns.push(self.parse_pattern()?);
+                    if !self.match_token(Token::Comma) {
+                        break;
+                    }
+                }
+                
+                self.expect(Token::RightParen)?;
+                Ok(Pattern::Tuple(patterns))
+            }
+            
+            // Struct pattern with field shorthand
+            Some(Token::LeftBrace) => {
+                self.advance();
+                let mut fields = Vec::new();
+                
+                while !self.check(Token::RightBrace) {
+                    let name = self.expect_identifier()?;
+                    let pattern = if self.match_token(Token::Colon) {
+                        self.parse_pattern()?
+                    } else {
+                        Pattern::Variable(name.clone())
+                    };
+                    
+                    fields.push(FieldPattern { name, pattern });
+                    
+                    if !self.match_token(Token::Comma) {
+                        break;
+                    }
+                }
+                
+                self.expect(Token::RightBrace)?;
+                Ok(Pattern::Struct(fields))
+            }
+            
+            _ => {
+                let name = self.expect_identifier()?;
+                Ok(Pattern::Variable(name))
+            }
+        }
+    }
+}
+
+// Enum with complex variants
+enum Expression {
+    Literal(Literal),
+    Variable(String),
+    Binary {
+        op: BinaryOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    If {
+        condition: Box<Expression>,
+        then_branch: Box<Expression>,
+        else_branch: Option<Box<Expression>>,
+    },
+    Match {
+        scrutinee: Box<Expression>,
+        arms: Vec<MatchArm>,
+    },
+    Closure {
+        params: Vec<Pattern>,
+        body: Box<Expression>,
+        captures: Vec<Capture>,
+    },
+}
+
+// Function with WCET and memory constraints
+function optimize_expression(expr: Expression) -> Expression 
+within 1000 cycles
+memory 512 bytes
+{
+    match expr {
+        Expression::Binary { op: BinaryOp::Add, left, right } => {
+            match (*left, *right) {
+                (Expression::Literal(Literal::Number(0)), e) |
+                (e, Expression::Literal(Literal::Number(0))) => e,
+                (l, r) => Expression::Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(optimize_expression(l)),
+                    right: Box::new(optimize_expression(r)),
+                }
+            }
+        }
+        Expression::If { condition, then_branch, else_branch } => {
+            match condition.as_ref() {
+                Expression::Literal(Literal::Bool(true)) => *then_branch,
+                Expression::Literal(Literal::Bool(false)) => {
+                    else_branch.map(|e| *e).unwrap_or(Expression::Literal(Literal::Unit))
+                }
+                _ => Expression::If {
+                    condition: Box::new(optimize_expression(*condition)),
+                    then_branch: Box::new(optimize_expression(*then_branch)),
+                    else_branch: else_branch.map(|e| Box::new(optimize_expression(*e))),
+                }
+            }
+        }
+        _ => expr,
+    }
+}
+
+// State machine type
+type DoorState = state {
+    states: [Open, Closed, Locked],
+    initial: Closed,
+    transitions: [
+        Closed -> Open when open_door(),
+        Open -> Closed when close_door(),
+        Closed -> Locked when lock(),
+        Locked -> Closed when unlock(),
+    ],
+}
+
+// Linear type example
+function transfer_ownership(resource: linear Resource) -> linear Resource {
+    // Resource is moved, not copied
+    process_resource(resource)
+}
+
+// Channel communication example
+function producer(ch: channel<i32>) within O(n) {
+    for i in 0..100 {
+        ch <- i;
+    }
+}
+
+function consumer(ch: channel<i32>) {
+    loop {
+        match <-ch {
+            Some(value) => process(value),
+            None => break,
+        }
+    }
+}
+
+// Const generics example
+type Matrix<const N: usize, const M: usize> = {
+    data: [[f64; M]; N],
+}
+
+impl<const N: usize, const M: usize> Matrix<N, M> {
+    const function zero() -> Self {
+        Matrix {
+            data: [[0.0; M]; N],
+        }
+    }
+    
+    function multiply<const P: usize>(&self, other: &Matrix<M, P>) -> Matrix<N, P> 
+    within O(N * M * P) 
+    {
+        let mut result = Matrix::zero();
+        
+        for i in 0..N {
+            for j in 0..P {
+                for k in 0..M {
+                    result.data[i][j] += self.data[i][k] * other.data[k][j];
+                }
+            }
+        }
+        
+        result
+    }
+}
+
+// Main entry point with defer
+function main() -> i32 {
+    let mut parser = Parser::new(&tokens);
+    
+    defer {
+        println!(\"Parser finished with {} errors\", parser.errors.len());
+    }
+    
+    match parser.parse_program() {
+        Ok(ast) => {
+            println!(\"Parse successful!\");
+            pretty_print(&ast);
+            0
+        }
+        Err(e) => {
+            eprintln!(\"Parse error: {:?}\", e);
+            1
+        }
+    }
+}
+";
+
+    // Parse the program
+    let mut parser = new_parser(source, 0);
+    let reporter = new_error_reporter();
+    
+    println!("Parsing complex Tempo program...\n");
+    
+    match parse_program(&mut parser) {
+        Ok(program) => {
+            println!("✓ Parse successful!");
+            println!("  - {} modules parsed", program.modules.len());
+            
+            if let Some(module) = program.modules.first() {
+                println!("  - {} imports", module.imports.len());
+                println!("  - {} exports", module.exports.len());
+                println!("  - {} top-level items", module.items.len());
+                
+                // Count different item types
+                let mut functions = 0;
+                let mut types = 0;
+                let mut traits = 0;
+                let mut impls = 0;
+                let mut enums = 0;
+                
+                for item in &module.items {
+                    match item {
+                        Item::Function(_) => functions += 1,
+                        Item::Type(_) => types += 1,
+                        Item::Trait(_) => traits += 1,
+                        Item::Impl(_) => impls += 1,
+                        Item::Enum(_) => enums += 1,
+                        _ => {}
+                    }
+                }
+                
+                println!("\nItem breakdown:");
+                println!("  - {} functions", functions);
+                println!("  - {} type definitions", types);
+                println!("  - {} traits", traits);
+                println!("  - {} impl blocks", impls);
+                println!("  - {} enums", enums);
+            }
+            
+            // Demonstrate AST visitor pattern
+            let mut visitor = StatsVisitor::new();
+            visitor.visit_program(&program);
+            
+            println!("\nAST Statistics:");
+            println!("  - {} expressions", visitor.expression_count);
+            println!("  - {} patterns", visitor.pattern_count);
+            println!("  - {} type expressions", visitor.type_count);
+            println!("  - {} statements", visitor.statement_count);
+            
+            println!("\nFeatures used:");
+            if visitor.has_generics { println!("  ✓ Generics"); }
+            if visitor.has_traits { println!("  ✓ Traits"); }
+            if visitor.has_async { println!("  ✓ Async/await"); }
+            if visitor.has_wcet { println!("  ✓ WCET annotations"); }
+            if visitor.has_pattern_matching { println!("  ✓ Pattern matching"); }
+            if visitor.has_closures { println!("  ✓ Closures"); }
+        }
+        Err(errors) => {
+            println!("✗ Parse failed with {} errors:", errors.len());
+            
+            for error in errors {
+                println!("\n{}", format_error(&reporter, &error));
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// AST Visitor for gathering statistics
+// ===========================================================================
+
+type StatsVisitor = {
+    expression_count: u32,
+    pattern_count: u32,
+    type_count: u32,
+    statement_count: u32,
+    has_generics: bool,
+    has_traits: bool,
+    has_async: bool,
+    has_wcet: bool,
+    has_pattern_matching: bool,
+    has_closures: bool,
+}
+
+impl StatsVisitor {
+    function new() -> Self {
+        StatsVisitor {
+            expression_count: 0,
+            pattern_count: 0,
+            type_count: 0,
+            statement_count: 0,
+            has_generics: false,
+            has_traits: false,
+            has_async: false,
+            has_wcet: false,
+            has_pattern_matching: false,
+            has_closures: false,
+        }
+    }
+}
+
+impl ASTVisitor for StatsVisitor {
+    function visit_program(&mut self, program: &Program) {
+        for module in &program.modules {
+            self.visit_module(module);
+        }
+    }
+    
+    function visit_module(&mut self, module: &Module) {
+        for item in &module.items {
+            self.visit_item(item);
+        }
+    }
+    
+    function visit_item(&mut self, item: &Item) {
+        match item {
+            Item::Function(f) => {
+                if f.generics.is_some() {
+                    self.has_generics = true;
+                }
+                if f.is_async {
+                    self.has_async = true;
+                }
+                if f.wcet.is_some() {
+                    self.has_wcet = true;
+                }
+                if let Some(body) = &f.body {
+                    self.visit_block(body);
+                }
+            }
+            Item::Trait(_) => {
+                self.has_traits = true;
+            }
+            Item::Type(t) => {
+                if t.generics.is_some() {
+                    self.has_generics = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    function visit_expression(&mut self, expr: &Expression) {
+        self.expression_count += 1;
+        
+        match expr {
+            Expression::Match(_, _) => {
+                self.has_pattern_matching = true;
+            }
+            Expression::Closure(_, _, _) => {
+                self.has_closures = true;
+            }
+            _ => {}
+        }
+    }
+    
+    function visit_statement(&mut self, stmt: &Statement) {
+        self.statement_count += 1;
+    }
+    
+    function visit_pattern(&mut self, pattern: &Pattern) {
+        self.pattern_count += 1;
+    }
+    
+    function visit_type(&mut self, ty: &TypeExpr) {
+        self.type_count += 1;
+    }
+    
+    function visit_block(&mut self, block: &Block) {
+        for stmt in &block.statements {
+            self.visit_statement(stmt);
+        }
+        if let Some(expr) = &block.final_expr {
+            self.visit_expression(expr);
+        }
+    }
+}

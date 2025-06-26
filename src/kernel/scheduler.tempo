@@ -1,0 +1,234 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Deterministic Scheduler
+// Fixed time-slice round-robin scheduler with predictable behavior
+
+import "memory.tempo"
+
+// Process states
+const PROCESS_READY = 0
+const PROCESS_RUNNING = 1
+const PROCESS_BLOCKED = 2
+const PROCESS_TERMINATED = 3
+
+// Scheduler constants
+const MAX_PROCESSES = 32
+const TIME_SLICE_MS = 10  // 10ms time slices
+const TICKS_PER_SLICE = 10  // Assuming 100Hz timer
+
+// Process Control Block
+struct PCB {
+    pid: u32
+    state: u8
+    priority: u8
+    time_slice: u32
+    cpu_time: u32
+    
+    // CPU context
+    eax: u32
+    ebx: u32
+    ecx: u32
+    edx: u32
+    esi: u32
+    edi: u32
+    ebp: u32
+    esp: u32
+    eip: u32
+    eflags: u32
+    
+    // Memory
+    page_directory: u32
+    stack_base: u32
+    stack_size: u32
+}
+
+// Scheduler state
+var processes: [MAX_PROCESSES]PCB
+var process_count: u32 = 0
+var current_process: u32 = 0
+var ticks_remaining: u32 = 0
+var scheduler_enabled: bool = false
+
+// Initialize the scheduler
+func scheduler_init() {
+    // Clear process table
+    for i in 0..MAX_PROCESSES {
+        processes[i].state = PROCESS_TERMINATED
+        processes[i].pid = 0
+    }
+    
+    // Create idle process (PID 0)
+    create_idle_process()
+    
+    // Enable scheduling
+    scheduler_enabled = true
+    ticks_remaining = TICKS_PER_SLICE
+}
+
+// Create the idle process
+func create_idle_process() {
+    processes[0].pid = 0
+    processes[0].state = PROCESS_READY
+    processes[0].priority = 0  // Lowest priority
+    processes[0].time_slice = TICKS_PER_SLICE
+    processes[0].cpu_time = 0
+    process_count = 1
+}
+
+// Create a new process
+func create_process(entry_point: u32, priority: u8) -> u32 {
+    if process_count >= MAX_PROCESSES {
+        return 0  // No space for new process
+    }
+    
+    // Find free PCB slot
+    var pid: u32 = 0
+    for i in 1..MAX_PROCESSES {
+        if processes[i].state == PROCESS_TERMINATED {
+            pid = i
+            break
+        }
+    }
+    
+    if pid == 0 {
+        return 0  // No free slot found
+    }
+    
+    // Initialize PCB
+    processes[pid].pid = pid
+    processes[pid].state = PROCESS_READY
+    processes[pid].priority = priority
+    processes[pid].time_slice = TICKS_PER_SLICE
+    processes[pid].cpu_time = 0
+    
+    // Set up initial context
+    processes[pid].eip = entry_point
+    processes[pid].eflags = 0x202  // Interrupts enabled
+    
+    // Allocate stack
+    let stack_addr = allocate_page()
+    if stack_addr == 0 {
+        return 0  // Failed to allocate stack
+    }
+    
+    processes[pid].stack_base = stack_addr
+    processes[pid].stack_size = 4096
+    processes[pid].esp = stack_addr + 4096 - 4  // Stack grows down
+    processes[pid].ebp = processes[pid].esp
+    
+    process_count += 1
+    return pid
+}
+
+// Timer tick handler - called by timer interrupt
+func scheduler_tick() {
+    if !scheduler_enabled {
+        return
+    }
+    
+    // Update CPU time for current process
+    if current_process < MAX_PROCESSES {
+        processes[current_process].cpu_time += 1
+    }
+    
+    // Decrement time slice
+    ticks_remaining -= 1
+    
+    // Time slice expired?
+    if ticks_remaining == 0 {
+        schedule()
+    }
+}
+
+// Select next process to run (deterministic round-robin)
+func schedule() {
+    if process_count == 0 {
+        return  // No processes to schedule
+    }
+    
+    // Save current process context (would be done in assembly)
+    if current_process < MAX_PROCESSES && processes[current_process].state == PROCESS_RUNNING {
+        processes[current_process].state = PROCESS_READY
+    }
+    
+    // Find next ready process (round-robin)
+    let start = current_process
+    loop {
+        current_process = (current_process + 1) % MAX_PROCESSES
+        
+        if processes[current_process].state == PROCESS_READY {
+            break
+        }
+        
+        // Wrapped around to start?
+        if current_process == start {
+            // No ready processes, run idle
+            current_process = 0
+            break
+        }
+    }
+    
+    // Switch to selected process
+    processes[current_process].state = PROCESS_RUNNING
+    ticks_remaining = TICKS_PER_SLICE
+    
+    // Context switch would happen here (in assembly)
+    // switch_context(&processes[current_process])
+}
+
+// Yield CPU to next process
+func yield() {
+    ticks_remaining = 0
+    schedule()
+}
+
+// Block current process
+func block_process(pid: u32) {
+    if pid < MAX_PROCESSES && processes[pid].state == PROCESS_RUNNING {
+        processes[pid].state = PROCESS_BLOCKED
+        schedule()
+    }
+}
+
+// Unblock a process
+func unblock_process(pid: u32) {
+    if pid < MAX_PROCESSES && processes[pid].state == PROCESS_BLOCKED {
+        processes[pid].state = PROCESS_READY
+    }
+}
+
+// Terminate a process
+func terminate_process(pid: u32) {
+    if pid == 0 || pid >= MAX_PROCESSES {
+        return  // Can't terminate idle process or invalid PID
+    }
+    
+    if processes[pid].state != PROCESS_TERMINATED {
+        // Free process resources
+        if processes[pid].stack_base != 0 {
+            free_page(processes[pid].stack_base)
+        }
+        
+        processes[pid].state = PROCESS_TERMINATED
+        process_count -= 1
+        
+        // If terminating current process, schedule next
+        if pid == current_process {
+            schedule()
+        }
+    }
+}
+
+// Get current process ID
+func get_current_pid() -> u32 {
+    return current_process
+}
