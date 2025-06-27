@@ -1,0 +1,74 @@
+#!/bin/bash
+# Tempo Logs - Intelligent log analysis
+
+if [ $# -lt 1 ]; then
+    echo "❌ Usage: tempo logs <application>"
+    echo ""
+    echo "Examples:"
+    echo "  tempo logs myapp.app"
+    echo "  tempo logs payment-service"
+    exit 1
+fi
+
+APP="$1"
+
+echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+echo "║                        📋 TEMPO LOGS - Intelligent Analysis                 ║"
+echo "╠══════════════════════════════════════════════════════════════════════════════╣"
+echo "║ Application: $APP"
+echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Check system logs for the application
+echo "🔍 Searching system logs for '$APP'..."
+echo ""
+
+# macOS system logs
+LOG_ENTRIES=$(log show --predicate "process CONTAINS '$APP'" --last 1h 2>/dev/null | tail -20 || echo "")
+
+if [ -n "$LOG_ENTRIES" ]; then
+    echo "📋 Recent Log Entries (last hour):"
+    echo "=================================="
+    echo "$LOG_ENTRIES" | head -10
+    echo ""
+else
+    echo "📋 No recent system log entries found"
+    echo ""
+fi
+
+# Check for common log locations
+LOG_LOCATIONS=(
+    "/var/log/system.log"
+    "/usr/local/var/log/$APP.log"
+    "$HOME/Library/Logs/$APP.log"
+    "/tmp/$APP.log"
+    "./$APP.log"
+)
+
+echo "📁 Checking common log locations:"
+for log_file in "${LOG_LOCATIONS[@]}"; do
+    if [ -f "$log_file" ]; then
+        echo "   ✅ Found: $log_file"
+        echo "      Last modified: $(stat -f "%Sm" "$log_file")"
+        echo "      Size: $(stat -f "%z bytes" "$log_file")"
+        echo ""
+        echo "   📄 Recent entries:"
+        tail -5 "$log_file" | sed 's/^/      /'
+        echo ""
+    else
+        echo "   ❌ Not found: $log_file"
+    fi
+done
+
+echo "🔍 Intelligent Analysis:"
+echo "========================"
+echo "   📊 Log pattern analysis would be performed here"
+echo "   🚨 Error detection and correlation"
+echo "   📈 Performance trend analysis"
+echo "   💡 Recommendations based on log patterns"
+echo ""
+
+echo "🛠️ Available Log Commands:"
+echo "   tail -f /var/log/system.log | grep '$APP'"
+echo "   log stream --predicate \"process CONTAINS '$APP'\""
+echo ""

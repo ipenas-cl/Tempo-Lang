@@ -1,0 +1,218 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// TempoCore Instruction Set Architecture
+// Deterministic processor designed for Tempo/AtomicOS
+// All instructions have fixed, predictable cycle counts
+
+module tempcore_isa {
+    // Register Architecture
+    const REGISTER_COUNT: u32 = 32;
+    const REGISTER_WIDTH: u32 = 64;
+    
+    // Special Purpose Registers
+    enum SPR {
+        PC,          // Program Counter
+        SP,          // Stack Pointer
+        FP,          // Frame Pointer
+        LR,          // Link Register
+        SR,          // Status Register
+        TCR,         // Timing Control Register
+        DCR,         // Deadline Control Register
+        ECR,         // Error Control Register
+        CYCLE_LOW,   // Cycle counter (low 32 bits)
+        CYCLE_HIGH,  // Cycle counter (high 32 bits)
+        WCET,        // Worst-Case Execution Time
+        DEADLINE,    // Current deadline register
+        ATOMIC_CTX,  // Atomic context register
+        TEMPO_FLAGS, // Tempo-specific flags
+    }
+    
+    // Instruction Format (32-bit fixed width)
+    struct Instruction {
+        opcode: u8,      // 8-bit opcode
+        rd: u5,          // 5-bit destination register
+        rs1: u5,         // 5-bit source register 1
+        rs2: u5,         // 5-bit source register 2
+        func: u3,        // 3-bit function code
+        imm: u6,         // 6-bit immediate
+    }
+    
+    // Alternative format for immediate instructions
+    struct ImmInstruction {
+        opcode: u8,      // 8-bit opcode
+        rd: u5,          // 5-bit destination register
+        rs1: u5,         // 5-bit source register 1
+        imm: u14,        // 14-bit immediate
+    }
+    
+    // Instruction Categories with Fixed Cycle Counts
+    enum InstructionClass {
+        // Arithmetic/Logic (1 cycle)
+        ADD    = 0x01,  // rd = rs1 + rs2
+        SUB    = 0x02,  // rd = rs1 - rs2
+        AND    = 0x03,  // rd = rs1 & rs2
+        OR     = 0x04,  // rd = rs1 | rs2
+        XOR    = 0x05,  // rd = rs1 ^ rs2
+        SHL    = 0x06,  // rd = rs1 << rs2
+        SHR    = 0x07,  // rd = rs1 >> rs2
+        NOT    = 0x08,  // rd = ~rs1
+        
+        // Immediate Operations (1 cycle)
+        ADDI   = 0x11,  // rd = rs1 + imm
+        SUBI   = 0x12,  // rd = rs1 - imm
+        ANDI   = 0x13,  // rd = rs1 & imm
+        ORI    = 0x14,  // rd = rs1 | imm
+        XORI   = 0x15,  // rd = rs1 ^ imm
+        LDI    = 0x16,  // rd = imm (load immediate)
+        
+        // Memory Operations (2 cycles deterministic)
+        LD     = 0x20,  // rd = mem[rs1 + imm]
+        ST     = 0x21,  // mem[rs1 + imm] = rs2
+        LDX    = 0x22,  // rd = mem[rs1 + rs2]
+        STX    = 0x23,  // mem[rs1 + rs2] = rd
+        
+        // Scratchpad Memory (1 cycle - deterministic)
+        LDSP   = 0x24,  // rd = scratchpad[rs1 + imm]
+        STSP   = 0x25,  // scratchpad[rs1 + imm] = rs2
+        
+        // Control Flow (2 cycles - no speculation)
+        JMP    = 0x30,  // PC = rs1
+        JMPI   = 0x31,  // PC = PC + imm
+        BEQ    = 0x32,  // if (rs1 == rs2) PC += imm
+        BNE    = 0x33,  // if (rs1 != rs2) PC += imm
+        BLT    = 0x34,  // if (rs1 < rs2) PC += imm
+        BGE    = 0x35,  // if (rs1 >= rs2) PC += imm
+        CALL   = 0x36,  // LR = PC + 4; PC = rs1
+        RET    = 0x37,  // PC = LR
+        
+        // Tempo-Specific Instructions (1 cycle)
+        ATOMIC_BEGIN = 0x40,  // Begin atomic block
+        ATOMIC_END   = 0x41,  // End atomic block
+        SET_DEADLINE = 0x42,  // Set deadline register
+        CHECK_TIME   = 0x43,  // Check if within deadline
+        GET_CYCLE    = 0x44,  // Get cycle counter
+        SYNC_POINT   = 0x45,  // Synchronization barrier
+        
+        // Timing Control (1 cycle)
+        WAIT_CYCLES  = 0x50,  // Wait for N cycles
+        SET_WCET     = 0x51,  // Set WCET for current block
+        CHECK_WCET   = 0x52,  // Verify WCET compliance
+        
+        // Error Handling (1 cycle)
+        TRAP         = 0x60,  // Trigger trap handler
+        ERROR        = 0x61,  // Signal error condition
+        HALT         = 0x62,  // Halt execution
+        
+        // NoOp (1 cycle)
+        NOP          = 0x00,  // No operation
+    }
+    
+    // Cycle count table (guaranteed deterministic)
+    const CYCLE_COUNTS: map<InstructionClass, u32> = {
+        // All arithmetic/logic operations: 1 cycle
+        ADD: 1, SUB: 1, AND: 1, OR: 1, XOR: 1, SHL: 1, SHR: 1, NOT: 1,
+        ADDI: 1, SUBI: 1, ANDI: 1, ORI: 1, XORI: 1, LDI: 1,
+        
+        // Memory operations: 2 cycles (no cache variability)
+        LD: 2, ST: 2, LDX: 2, STX: 2,
+        
+        // Scratchpad: 1 cycle (always deterministic)
+        LDSP: 1, STSP: 1,
+        
+        // Control flow: 2 cycles (no branch prediction)
+        JMP: 2, JMPI: 2, BEQ: 2, BNE: 2, BLT: 2, BGE: 2, CALL: 2, RET: 2,
+        
+        // Tempo instructions: 1 cycle
+        ATOMIC_BEGIN: 1, ATOMIC_END: 1, SET_DEADLINE: 1, CHECK_TIME: 1,
+        GET_CYCLE: 1, SYNC_POINT: 1,
+        
+        // Timing control: 1 cycle (+ wait time for WAIT_CYCLES)
+        WAIT_CYCLES: 1, SET_WCET: 1, CHECK_WCET: 1,
+        
+        // Error handling: 1 cycle
+        TRAP: 1, ERROR: 1, HALT: 1,
+        
+        // NOP: 1 cycle
+        NOP: 1,
+    };
+    
+    // Addressing Modes
+    enum AddressingMode {
+        Register,        // Register direct
+        Immediate,       // Immediate value
+        RegisterOffset,  // Register + offset
+        Scratchpad,      // Scratchpad memory
+    }
+    
+    // Exception Types
+    enum Exception {
+        None = 0,
+        DeadlineMiss = 1,
+        WCETViolation = 2,
+        AtomicViolation = 3,
+        MemoryFault = 4,
+        IllegalInstruction = 5,
+        DivideByZero = 6,
+        Overflow = 7,
+    }
+    
+    // Processor State
+    struct ProcessorState {
+        registers: [u64; REGISTER_COUNT],
+        pc: u64,
+        sp: u64,
+        lr: u64,
+        sr: u32,              // Status register
+        cycle_count: u64,     // Total cycles executed
+        current_wcet: u32,    // Current WCET limit
+        deadline: u64,        // Current deadline in cycles
+        atomic_depth: u32,    // Atomic nesting level
+        exception: Exception,
+    }
+    
+    // Instruction Decoder
+    fn decode(word: u32) -> Instruction {
+        Instruction {
+            opcode: (word >> 24) & 0xFF,
+            rd: (word >> 19) & 0x1F,
+            rs1: (word >> 14) & 0x1F,
+            rs2: (word >> 9) & 0x1F,
+            func: (word >> 6) & 0x07,
+            imm: word & 0x3F,
+        }
+    }
+    
+    // Immediate instruction decoder
+    fn decode_imm(word: u32) -> ImmInstruction {
+        ImmInstruction {
+            opcode: (word >> 24) & 0xFF,
+            rd: (word >> 19) & 0x1F,
+            rs1: (word >> 14) & 0x1F,
+            imm: word & 0x3FFF,
+        }
+    }
+    
+    // Get guaranteed cycle count for instruction
+    fn get_cycle_count(opcode: u8) -> u32 {
+        match opcode {
+            op if CYCLE_COUNTS.contains_key(op as InstructionClass) => 
+                CYCLE_COUNTS[op as InstructionClass],
+            _ => 1  // Default to 1 cycle for unknown
+        }
+    }
+    
+    // Verify timing constraints
+    fn check_timing_constraint(state: &ProcessorState) -> bool {
+        state.cycle_count <= state.deadline && 
+        state.cycle_count <= state.current_wcet
+    }
+}

@@ -1,0 +1,847 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicFS - Deterministic filesystem for AtomicOS
+// Provides bounded worst-case execution time (WCET) for all operations
+// Uses B-tree indexing, journaling for crash consistency, and deterministic allocation
+
+module atomicfs;
+
+import core.types;
+import core.memory;
+import fs.btree;
+import fs.journal;
+import fs.allocator;
+
+// Filesystem constants for bounded operations
+const BLOCK_SIZE: u32 = 4096;
+const MAX_PATH_LENGTH: u32 = 255;
+const MAX_NAME_LENGTH: u32 = 63;
+const MAX_FILE_SIZE: u64 = 1 << 40; // 1TB
+const MAX_OPEN_FILES: u32 = 1024;
+const MAGIC_NUMBER: u32 = 0x41544F46; // "ATOF"
+
+// Filesystem superblock structure
+struct Superblock {
+    magic: u32,
+    version: u32,
+    block_count: u64,
+    free_blocks: u64,
+    inode_count: u64,
+    free_inodes: u64,
+    root_inode: u64,
+    journal_start: u64,
+    journal_size: u32,
+    btree_root: u64,
+    block_bitmap: u64,
+    inode_bitmap: u64,
+    first_data_block: u64,
+    mount_count: u32,
+    mount_time: u64,
+    last_check: u64,
+    checksum: u32,
+}
+
+// Inode structure with fixed size for predictable access
+struct Inode {
+    mode: u32,          // File type and permissions
+    uid: u32,           // User ID
+    gid: u32,           // Group ID
+    size: u64,          // File size in bytes
+    atime: u64,         // Access time
+    mtime: u64,         // Modification time
+    ctime: u64,         // Change time
+    blocks: u64,        // Number of blocks allocated
+    flags: u32,         // File flags
+    link_count: u32,    // Number of hard links
+    
+    // Direct block pointers (12 * 8 = 96 bytes)
+    direct: [u64; 12],
+    
+    // Indirect block pointers for larger files
+    indirect: u64,      // Points to block of pointers
+    double_indirect: u64,
+    triple_indirect: u64,
+    
+    // Extended attributes
+    xattr_block: u64,
+    checksum: u32,
+    reserved: [u32; 3],
+}
+
+// Directory entry with fixed size
+struct DirEntry {
+    inode: u64,
+    rec_len: u16,
+    name_len: u8,
+    file_type: u8,
+    name: [u8; MAX_NAME_LENGTH + 1],
+}
+
+// File handle for open files
+struct FileHandle {
+    inode_num: u64,
+    inode: Inode,
+    position: u64,
+    flags: u32,
+    ref_count: u32,
+}
+
+// Main filesystem structure
+struct AtomicFS {
+    device: *BlockDevice,
+    superblock: Superblock,
+    journal: Journal,
+    allocator: BlockAllocator,
+    inode_btree: BTree<u64, Inode>,
+    open_files: [FileHandle; MAX_OPEN_FILES],
+    file_table_lock: SpinLock,
+}
+
+// File types
+enum FileType : u8 {
+    Unknown = 0,
+    Regular = 1,
+    Directory = 2,
+    CharDevice = 3,
+    BlockDevice = 4,
+    Fifo = 5,
+    Socket = 6,
+    Symlink = 7,
+}
+
+// File mode bits
+const S_IFMT: u32 = 0o170000;   // File type mask
+const S_IFREG: u32 = 0o100000;  // Regular file
+const S_IFDIR: u32 = 0o040000;  // Directory
+const S_IFCHR: u32 = 0o020000;  // Character device
+const S_IFBLK: u32 = 0o060000;  // Block device
+const S_IFIFO: u32 = 0o010000;  // FIFO
+const S_IFSOCK: u32 = 0o140000; // Socket
+const S_IFLNK: u32 = 0o120000;  // Symbolic link
+
+// Permission bits
+const S_IRUSR: u32 = 0o400;     // User read
+const S_IWUSR: u32 = 0o200;     // User write
+const S_IXUSR: u32 = 0o100;     // User execute
+const S_IRGRP: u32 = 0o040;     // Group read
+const S_IWGRP: u32 = 0o020;     // Group write
+const S_IXGRP: u32 = 0o010;     // Group execute
+const S_IROTH: u32 = 0o004;     // Other read
+const S_IWOTH: u32 = 0o002;     // Other write
+const S_IXOTH: u32 = 0o001;     // Other execute
+
+// Initialize filesystem with bounded initialization time
+fn init(fs: *AtomicFS, device: *BlockDevice) -> Result<void> {
+    fs.device = device;
+    
+    // Read superblock (bounded: single block read)
+    let sb_buf: [u8; BLOCK_SIZE];
+    device.read_block(0, &sb_buf)?;
+    memory.copy(&fs.superblock, &sb_buf, sizeof(Superblock));
+    
+    // Verify magic number
+    if fs.superblock.magic != MAGIC_NUMBER {
+        return Err(Error.InvalidFilesystem);
+    }
+    
+    // Initialize journal (bounded by journal size)
+    fs.journal.init(device, fs.superblock.journal_start, fs.superblock.journal_size)?;
+    
+    // Initialize block allocator (bounded by bitmap size)
+    fs.allocator.init(device, fs.superblock.block_bitmap, fs.superblock.block_count)?;
+    
+    // Initialize inode B-tree (bounded by tree height)
+    fs.inode_btree.init(device, fs.superblock.btree_root)?;
+    
+    // Clear open file table (bounded by MAX_OPEN_FILES)
+    for i in 0..MAX_OPEN_FILES {
+        fs.open_files[i].inode_num = 0;
+        fs.open_files[i].ref_count = 0;
+    }
+    
+    fs.file_table_lock.init();
+    
+    return Ok(void);
+}
+
+// Mount filesystem with replay of journal
+fn mount(fs: *AtomicFS) -> Result<void> {
+    // Replay journal for crash recovery (bounded by journal size)
+    fs.journal.replay()?;
+    
+    // Update mount information
+    fs.superblock.mount_count += 1;
+    fs.superblock.mount_time = get_time();
+    
+    // Write updated superblock
+    write_superblock(fs)?;
+    
+    return Ok(void);
+}
+
+// Unmount filesystem with proper cleanup
+fn unmount(fs: *AtomicFS) -> Result<void> {
+    // Flush all pending writes (bounded by journal size)
+    fs.journal.flush()?;
+    
+    // Close all open files (bounded by MAX_OPEN_FILES)
+    fs.file_table_lock.lock();
+    for i in 0..MAX_OPEN_FILES {
+        if fs.open_files[i].ref_count > 0 {
+            // Force close file
+            fs.open_files[i].ref_count = 0;
+        }
+    }
+    fs.file_table_lock.unlock();
+    
+    // Write final superblock
+    write_superblock(fs)?;
+    
+    return Ok(void);
+}
+
+// Create a new inode with bounded allocation time
+fn create_inode(fs: *AtomicFS, mode: u32) -> Result<u64> {
+    // Begin journal transaction
+    let txn = fs.journal.begin_transaction()?;
+    
+    // Allocate inode number (bounded by bitmap scan)
+    let inode_num = fs.allocator.alloc_inode()?;
+    
+    // Initialize inode structure
+    let inode: Inode;
+    memory.zero(&inode, sizeof(Inode));
+    inode.mode = mode;
+    inode.uid = get_current_uid();
+    inode.gid = get_current_gid();
+    inode.atime = get_time();
+    inode.mtime = inode.atime;
+    inode.ctime = inode.atime;
+    inode.link_count = 1;
+    
+    // Insert into B-tree (bounded by tree height)
+    fs.inode_btree.insert(inode_num, &inode)?;
+    
+    // Update superblock counters
+    fs.superblock.free_inodes -= 1;
+    
+    // Commit transaction
+    fs.journal.commit_transaction(txn)?;
+    
+    return Ok(inode_num);
+}
+
+// Delete inode with bounded deallocation time
+fn delete_inode(fs: *AtomicFS, inode_num: u64) -> Result<void> {
+    // Begin journal transaction
+    let txn = fs.journal.begin_transaction()?;
+    
+    // Read inode
+    let inode: Inode;
+    fs.inode_btree.get(inode_num, &inode)?;
+    
+    // Free all data blocks (bounded by file size / block size)
+    free_inode_blocks(fs, &inode)?;
+    
+    // Remove from B-tree (bounded by tree height)
+    fs.inode_btree.remove(inode_num)?;
+    
+    // Free inode number
+    fs.allocator.free_inode(inode_num)?;
+    
+    // Update superblock counters
+    fs.superblock.free_inodes += 1;
+    
+    // Commit transaction
+    fs.journal.commit_transaction(txn)?;
+    
+    return Ok(void);
+}
+
+// Read inode with bounded lookup time
+fn read_inode(fs: *AtomicFS, inode_num: u64, inode: *Inode) -> Result<void> {
+    // B-tree lookup (bounded by tree height)
+    return fs.inode_btree.get(inode_num, inode);
+}
+
+// Write inode with bounded update time
+fn write_inode(fs: *AtomicFS, inode_num: u64, inode: *Inode) -> Result<void> {
+    // Begin journal transaction
+    let txn = fs.journal.begin_transaction()?;
+    
+    // Update modification time
+    inode.mtime = get_time();
+    inode.ctime = inode.mtime;
+    
+    // Update in B-tree (bounded by tree height)
+    fs.inode_btree.update(inode_num, inode)?;
+    
+    // Commit transaction
+    fs.journal.commit_transaction(txn)?;
+    
+    return Ok(void);
+}
+
+// Open file with bounded operation time
+fn open(fs: *AtomicFS, path: *const u8, flags: u32) -> Result<u32> {
+    // Lookup file by path (bounded by path depth)
+    let inode_num = lookup_path(fs, path)?;
+    
+    // Find free file handle (bounded by MAX_OPEN_FILES)
+    fs.file_table_lock.lock();
+    let handle_idx = find_free_handle(fs)?;
+    
+    // Initialize file handle
+    let handle = &fs.open_files[handle_idx];
+    handle.inode_num = inode_num;
+    read_inode(fs, inode_num, &handle.inode)?;
+    handle.position = 0;
+    handle.flags = flags;
+    handle.ref_count = 1;
+    
+    fs.file_table_lock.unlock();
+    
+    return Ok(handle_idx);
+}
+
+// Close file with bounded operation time
+fn close(fs: *AtomicFS, fd: u32) -> Result<void> {
+    if fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    fs.file_table_lock.lock();
+    
+    let handle = &fs.open_files[fd];
+    if handle.ref_count == 0 {
+        fs.file_table_lock.unlock();
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Decrement reference count
+    handle.ref_count -= 1;
+    
+    // If last reference, clean up
+    if handle.ref_count == 0 {
+        // Write back inode if modified
+        if handle.flags & O_RDWR || handle.flags & O_WRONLY {
+            write_inode(fs, handle.inode_num, &handle.inode)?;
+        }
+        handle.inode_num = 0;
+    }
+    
+    fs.file_table_lock.unlock();
+    
+    return Ok(void);
+}
+
+// Read from file with bounded transfer time
+fn read(fs: *AtomicFS, fd: u32, buffer: *u8, size: u64) -> Result<u64> {
+    if fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let handle = &fs.open_files[fd];
+    if handle.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Check read permission
+    if handle.flags & O_WRONLY {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Limit read to file size
+    let bytes_to_read = min(size, handle.inode.size - handle.position);
+    if bytes_to_read == 0 {
+        return Ok(0);
+    }
+    
+    // Read data blocks (bounded by size / BLOCK_SIZE)
+    let bytes_read = read_data(fs, &handle.inode, handle.position, buffer, bytes_to_read)?;
+    
+    // Update position
+    handle.position += bytes_read;
+    
+    // Update access time (deferred for performance)
+    // This will be written on close or sync
+    handle.inode.atime = get_time();
+    
+    return Ok(bytes_read);
+}
+
+// Write to file with bounded transfer time
+fn write(fs: *AtomicFS, fd: u32, buffer: *const u8, size: u64) -> Result<u64> {
+    if fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let handle = &fs.open_files[fd];
+    if handle.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    // Check write permission
+    if !(handle.flags & O_WRONLY || handle.flags & O_RDWR) {
+        return Err(Error.PermissionDenied);
+    }
+    
+    // Begin journal transaction
+    let txn = fs.journal.begin_transaction()?;
+    
+    // Write data blocks (bounded by size / BLOCK_SIZE)
+    let bytes_written = write_data(fs, &handle.inode, handle.position, buffer, size)?;
+    
+    // Update file size if needed
+    if handle.position + bytes_written > handle.inode.size {
+        handle.inode.size = handle.position + bytes_written;
+    }
+    
+    // Update position
+    handle.position += bytes_written;
+    
+    // Update times
+    handle.inode.mtime = get_time();
+    handle.inode.ctime = handle.inode.mtime;
+    
+    // Commit transaction
+    fs.journal.commit_transaction(txn)?;
+    
+    return Ok(bytes_written);
+}
+
+// Seek in file with constant time operation
+fn seek(fs: *AtomicFS, fd: u32, offset: i64, whence: u32) -> Result<u64> {
+    if fd >= MAX_OPEN_FILES {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let handle = &fs.open_files[fd];
+    if handle.ref_count == 0 {
+        return Err(Error.InvalidFileDescriptor);
+    }
+    
+    let new_position: u64;
+    
+    match whence {
+        SEEK_SET => {
+            if offset < 0 {
+                return Err(Error.InvalidArgument);
+            }
+            new_position = offset as u64;
+        },
+        SEEK_CUR => {
+            if offset < 0 && (-offset as u64) > handle.position {
+                return Err(Error.InvalidArgument);
+            }
+            new_position = (handle.position as i64 + offset) as u64;
+        },
+        SEEK_END => {
+            if offset < 0 && (-offset as u64) > handle.inode.size {
+                return Err(Error.InvalidArgument);
+            }
+            new_position = (handle.inode.size as i64 + offset) as u64;
+        },
+        _ => return Err(Error.InvalidArgument),
+    }
+    
+    handle.position = new_position;
+    return Ok(new_position);
+}
+
+// Create directory with bounded operation time
+fn mkdir(fs: *AtomicFS, path: *const u8, mode: u32) -> Result<void> {
+    // Parse path to get parent directory and new name
+    let (parent_path, name) = split_path(path)?;
+    
+    // Lookup parent directory
+    let parent_inode_num = lookup_path(fs, parent_path)?;
+    
+    // Read parent inode
+    let parent_inode: Inode;
+    read_inode(fs, parent_inode_num, &parent_inode)?;
+    
+    // Check if parent is a directory
+    if (parent_inode.mode & S_IFMT) != S_IFDIR {
+        return Err(Error.NotADirectory);
+    }
+    
+    // Create new directory inode
+    let dir_inode_num = create_inode(fs, S_IFDIR | (mode & 0o777))?;
+    
+    // Add directory entries for . and ..
+    add_dir_entry(fs, dir_inode_num, dir_inode_num, ".")?;
+    add_dir_entry(fs, dir_inode_num, parent_inode_num, "..")?;
+    
+    // Add entry in parent directory
+    add_dir_entry(fs, parent_inode_num, dir_inode_num, name)?;
+    
+    return Ok(void);
+}
+
+// Remove directory with bounded operation time
+fn rmdir(fs: *AtomicFS, path: *const u8) -> Result<void> {
+    // Lookup directory
+    let inode_num = lookup_path(fs, path)?;
+    
+    // Read inode
+    let inode: Inode;
+    read_inode(fs, inode_num, &inode)?;
+    
+    // Check if it's a directory
+    if (inode.mode & S_IFMT) != S_IFDIR {
+        return Err(Error.NotADirectory);
+    }
+    
+    // Check if directory is empty (only . and .. entries)
+    if !is_dir_empty(fs, &inode)? {
+        return Err(Error.DirectoryNotEmpty);
+    }
+    
+    // Parse path to get parent directory and name
+    let (parent_path, name) = split_path(path)?;
+    let parent_inode_num = lookup_path(fs, parent_path)?;
+    
+    // Remove entry from parent directory
+    remove_dir_entry(fs, parent_inode_num, name)?;
+    
+    // Delete inode
+    delete_inode(fs, inode_num)?;
+    
+    return Ok(void);
+}
+
+// Create file with bounded operation time
+fn create(fs: *AtomicFS, path: *const u8, mode: u32) -> Result<u32> {
+    // Parse path to get parent directory and new name
+    let (parent_path, name) = split_path(path)?;
+    
+    // Lookup parent directory
+    let parent_inode_num = lookup_path(fs, parent_path)?;
+    
+    // Create new file inode
+    let file_inode_num = create_inode(fs, S_IFREG | (mode & 0o777))?;
+    
+    // Add entry in parent directory
+    add_dir_entry(fs, parent_inode_num, file_inode_num, name)?;
+    
+    // Open the newly created file
+    return open(fs, path, O_RDWR);
+}
+
+// Unlink file with bounded operation time
+fn unlink(fs: *AtomicFS, path: *const u8) -> Result<void> {
+    // Lookup file
+    let inode_num = lookup_path(fs, path)?;
+    
+    // Read inode
+    let inode: Inode;
+    read_inode(fs, inode_num, &inode)?;
+    
+    // Check if it's a regular file
+    if (inode.mode & S_IFMT) != S_IFREG {
+        return Err(Error.IsADirectory);
+    }
+    
+    // Parse path to get parent directory and name
+    let (parent_path, name) = split_path(path)?;
+    let parent_inode_num = lookup_path(fs, parent_path)?;
+    
+    // Remove entry from parent directory
+    remove_dir_entry(fs, parent_inode_num, name)?;
+    
+    // Decrement link count
+    inode.link_count -= 1;
+    
+    // If no more links, delete inode
+    if inode.link_count == 0 {
+        delete_inode(fs, inode_num)?;
+    } else {
+        write_inode(fs, inode_num, &inode)?;
+    }
+    
+    return Ok(void);
+}
+
+// Sync filesystem with bounded flush time
+fn sync(fs: *AtomicFS) -> Result<void> {
+    // Flush journal (bounded by journal size)
+    fs.journal.flush()?;
+    
+    // Write superblock
+    write_superblock(fs)?;
+    
+    return Ok(void);
+}
+
+// Helper function to read data blocks
+fn read_data(fs: *AtomicFS, inode: *Inode, offset: u64, buffer: *u8, size: u64) -> Result<u64> {
+    let start_block = offset / BLOCK_SIZE;
+    let end_block = (offset + size - 1) / BLOCK_SIZE;
+    let block_offset = offset % BLOCK_SIZE;
+    
+    let mut bytes_read: u64 = 0;
+    let mut buffer_ptr = buffer;
+    
+    // Read blocks (bounded by size / BLOCK_SIZE)
+    for block_idx in start_block..=end_block {
+        let block_num = get_block_number(fs, inode, block_idx)?;
+        if block_num == 0 {
+            // Sparse file - return zeros
+            let bytes_in_block = min(BLOCK_SIZE - block_offset, size - bytes_read);
+            memory.zero(buffer_ptr, bytes_in_block);
+            buffer_ptr += bytes_in_block;
+            bytes_read += bytes_in_block;
+        } else {
+            // Read block
+            let block_buf: [u8; BLOCK_SIZE];
+            fs.device.read_block(block_num, &block_buf)?;
+            
+            let bytes_in_block = min(BLOCK_SIZE - block_offset, size - bytes_read);
+            memory.copy(buffer_ptr, &block_buf[block_offset], bytes_in_block);
+            buffer_ptr += bytes_in_block;
+            bytes_read += bytes_in_block;
+        }
+    }
+    
+    return Ok(bytes_read);
+}
+
+// Helper function to write data blocks
+fn write_data(fs: *AtomicFS, inode: *Inode, offset: u64, buffer: *const u8, size: u64) -> Result<u64> {
+    let start_block = offset / BLOCK_SIZE;
+    let end_block = (offset + size - 1) / BLOCK_SIZE;
+    let block_offset = offset % BLOCK_SIZE;
+    
+    let mut bytes_written: u64 = 0;
+    let mut buffer_ptr = buffer;
+    
+    // Write blocks (bounded by size / BLOCK_SIZE)
+    for block_idx in start_block..=end_block {
+        let block_num = get_or_alloc_block(fs, inode, block_idx)?;
+        
+        let bytes_in_block = min(BLOCK_SIZE - block_offset, size - bytes_written);
+        
+        if block_offset != 0 || bytes_in_block != BLOCK_SIZE {
+            // Partial block write - read-modify-write
+            let block_buf: [u8; BLOCK_SIZE];
+            fs.device.read_block(block_num, &block_buf)?;
+            memory.copy(&block_buf[block_offset], buffer_ptr, bytes_in_block);
+            fs.device.write_block(block_num, &block_buf)?;
+        } else {
+            // Full block write
+            fs.device.write_block(block_num, buffer_ptr)?;
+        }
+        
+        buffer_ptr += bytes_in_block;
+        bytes_written += bytes_in_block;
+    }
+    
+    return Ok(bytes_written);
+}
+
+// Get block number for a given file block index
+fn get_block_number(fs: *AtomicFS, inode: *Inode, block_idx: u64) -> Result<u64> {
+    // Direct blocks (bounded: constant time)
+    if block_idx < 12 {
+        return Ok(inode.direct[block_idx]);
+    }
+    
+    // Indirect blocks (bounded: single block read)
+    block_idx -= 12;
+    let ptrs_per_block = BLOCK_SIZE / sizeof(u64);
+    
+    if block_idx < ptrs_per_block {
+        if inode.indirect == 0 {
+            return Ok(0);
+        }
+        let indirect_buf: [u64; ptrs_per_block];
+        fs.device.read_block(inode.indirect, &indirect_buf)?;
+        return Ok(indirect_buf[block_idx]);
+    }
+    
+    // Double indirect blocks (bounded: two block reads)
+    block_idx -= ptrs_per_block;
+    if block_idx < ptrs_per_block * ptrs_per_block {
+        if inode.double_indirect == 0 {
+            return Ok(0);
+        }
+        let idx1 = block_idx / ptrs_per_block;
+        let idx2 = block_idx % ptrs_per_block;
+        
+        let indirect1_buf: [u64; ptrs_per_block];
+        fs.device.read_block(inode.double_indirect, &indirect1_buf)?;
+        
+        if indirect1_buf[idx1] == 0 {
+            return Ok(0);
+        }
+        
+        let indirect2_buf: [u64; ptrs_per_block];
+        fs.device.read_block(indirect1_buf[idx1], &indirect2_buf)?;
+        return Ok(indirect2_buf[idx2]);
+    }
+    
+    // Triple indirect blocks (bounded: three block reads)
+    block_idx -= ptrs_per_block * ptrs_per_block;
+    if block_idx < ptrs_per_block * ptrs_per_block * ptrs_per_block {
+        if inode.triple_indirect == 0 {
+            return Ok(0);
+        }
+        let idx1 = block_idx / (ptrs_per_block * ptrs_per_block);
+        let idx2 = (block_idx / ptrs_per_block) % ptrs_per_block;
+        let idx3 = block_idx % ptrs_per_block;
+        
+        let indirect1_buf: [u64; ptrs_per_block];
+        fs.device.read_block(inode.triple_indirect, &indirect1_buf)?;
+        
+        if indirect1_buf[idx1] == 0 {
+            return Ok(0);
+        }
+        
+        let indirect2_buf: [u64; ptrs_per_block];
+        fs.device.read_block(indirect1_buf[idx1], &indirect2_buf)?;
+        
+        if indirect2_buf[idx2] == 0 {
+            return Ok(0);
+        }
+        
+        let indirect3_buf: [u64; ptrs_per_block];
+        fs.device.read_block(indirect2_buf[idx2], &indirect3_buf)?;
+        return Ok(indirect3_buf[idx3]);
+    }
+    
+    return Err(Error.FileTooLarge);
+}
+
+// Get or allocate block for writing
+fn get_or_alloc_block(fs: *AtomicFS, inode: *Inode, block_idx: u64) -> Result<u64> {
+    // Check existing block
+    let existing_block = get_block_number(fs, inode, block_idx)?;
+    if existing_block != 0 {
+        return Ok(existing_block);
+    }
+    
+    // Allocate new block
+    let new_block = fs.allocator.alloc_block()?;
+    
+    // Update inode block pointers
+    if block_idx < 12 {
+        // Direct block
+        inode.direct[block_idx] = new_block;
+    } else {
+        // Indirect blocks - implement allocation logic
+        // This follows similar pattern to get_block_number
+        // but allocates intermediate blocks as needed
+        return alloc_indirect_block(fs, inode, block_idx, new_block);
+    }
+    
+    inode.blocks += 1;
+    return Ok(new_block);
+}
+
+// Write superblock with atomic update
+fn write_superblock(fs: *AtomicFS) -> Result<void> {
+    // Calculate checksum
+    fs.superblock.checksum = calculate_checksum(&fs.superblock);
+    
+    // Write to both primary and backup locations
+    let sb_buf: [u8; BLOCK_SIZE];
+    memory.zero(&sb_buf, BLOCK_SIZE);
+    memory.copy(&sb_buf, &fs.superblock, sizeof(Superblock));
+    
+    // Primary superblock at block 0
+    fs.device.write_block(0, &sb_buf)?;
+    
+    // Backup superblock at fixed offset
+    fs.device.write_block(BACKUP_SUPERBLOCK_OFFSET, &sb_buf)?;
+    
+    return Ok(void);
+}
+
+// Lookup path with bounded depth traversal
+fn lookup_path(fs: *AtomicFS, path: *const u8) -> Result<u64> {
+    if path[0] != '/' {
+        return Err(Error.InvalidPath);
+    }
+    
+    let mut current_inode = fs.superblock.root_inode;
+    let mut path_ptr = path + 1;
+    
+    // Bounded by MAX_PATH_DEPTH constant
+    const MAX_PATH_DEPTH: u32 = 32;
+    for depth in 0..MAX_PATH_DEPTH {
+        // Skip multiple slashes
+        while *path_ptr == '/' {
+            path_ptr += 1;
+        }
+        
+        // End of path?
+        if *path_ptr == 0 {
+            return Ok(current_inode);
+        }
+        
+        // Extract next component
+        let component: [u8; MAX_NAME_LENGTH + 1];
+        let component_len = extract_path_component(path_ptr, &component)?;
+        path_ptr += component_len;
+        
+        // Lookup in current directory
+        current_inode = lookup_in_directory(fs, current_inode, &component)?;
+    }
+    
+    return Err(Error.PathTooDeep);
+}
+
+// Additional helper functions would be implemented here...
+// - free_inode_blocks: Free all blocks allocated to an inode
+// - find_free_handle: Find a free entry in the open file table
+// - split_path: Split a path into parent directory and filename
+// - add_dir_entry: Add an entry to a directory
+// - remove_dir_entry: Remove an entry from a directory
+// - is_dir_empty: Check if a directory contains only . and ..
+// - alloc_indirect_block: Allocate indirect block structures
+// - calculate_checksum: Calculate CRC32 checksum
+// - extract_path_component: Extract next component from path string
+// - lookup_in_directory: Find entry in a directory
+
+// Error codes
+enum Error {
+    InvalidFilesystem,
+    InvalidPath,
+    PathTooDeep,
+    FileNotFound,
+    InvalidFileDescriptor,
+    PermissionDenied,
+    NotADirectory,
+    IsADirectory,
+    DirectoryNotEmpty,
+    FileTooLarge,
+    NoSpace,
+    InvalidArgument,
+}
+
+// File open flags
+const O_RDONLY: u32 = 0x0000;
+const O_WRONLY: u32 = 0x0001;
+const O_RDWR: u32 = 0x0002;
+const O_CREAT: u32 = 0x0040;
+const O_EXCL: u32 = 0x0080;
+const O_TRUNC: u32 = 0x0200;
+const O_APPEND: u32 = 0x0400;
+
+// Seek constants
+const SEEK_SET: u32 = 0;
+const SEEK_CUR: u32 = 1;
+const SEEK_END: u32 = 2;
+
+// Backup superblock location
+const BACKUP_SUPERBLOCK_OFFSET: u64 = 8192;

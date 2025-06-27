@@ -1,0 +1,63 @@
+#!/bin/bash
+# Tempo Debugger - Debug Tempo applications
+
+if [ $# -lt 1 ]; then
+    echo "❌ Usage: tempo debug <application>"
+    echo ""
+    echo "Examples:"
+    echo "  tempo debug myapp.app"
+    echo "  tempo debug payment-service"
+    exit 1
+fi
+
+APP="$1"
+
+echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+echo "║                        🐛 TEMPO DEBUGGER v1.0                               ║"
+echo "║                    Advanced AtomicOS Process Debugging                       ║"
+echo "╠══════════════════════════════════════════════════════════════════════════════╣"
+echo "║ Target Application: $APP"
+echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+echo ""
+
+# Find the process
+PID=$(pgrep -f "$APP" 2>/dev/null | head -1)
+
+if [ -z "$PID" ]; then
+    echo "❌ Application '$APP' not found running"
+    echo ""
+    echo "🔍 Available Tempo processes:"
+    ps aux | grep -E "\.(app|tempo)|stage1" | grep -v grep | awk '{print "   " $2 " - " $11}'
+    exit 1
+fi
+
+echo "✅ Found process: PID $PID"
+echo ""
+echo "🔍 Process Information:"
+echo "   PID: $PID"
+echo "   Command: $(ps -p $PID -o command= 2>/dev/null)"
+echo "   Status: $(ps -p $PID -o stat= 2>/dev/null)"
+echo "   CPU Usage: $(ps -p $PID -o %cpu= 2>/dev/null)%"
+echo "   Memory: $(ps -p $PID -o %mem= 2>/dev/null)%"
+echo "   Start Time: $(ps -p $PID -o lstart= 2>/dev/null)"
+echo ""
+
+echo "📊 Memory Layout:"
+vmmap "$PID" 2>/dev/null | head -10 || echo "   Memory map not available"
+echo ""
+
+echo "🕐 WCET Analysis:"
+echo "   ⏱️  Real-time timing analysis would be performed here"
+echo "   📈 Performance counters would be monitored"
+echo "   🎯 WCET compliance would be verified"
+echo ""
+
+echo "🔧 Debug Commands Available:"
+echo "   kill -USR1 $PID    # Send debug signal"
+echo "   kill -USR2 $PID    # Send profile signal"
+echo "   kill -TERM $PID    # Graceful shutdown"
+echo ""
+
+echo "💡 For advanced debugging:"
+echo "   lldb -p $PID       # Attach native debugger"
+echo "   sample $PID        # Sample execution"

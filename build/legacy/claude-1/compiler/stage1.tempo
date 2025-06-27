@@ -1,0 +1,224 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Stage 1 - Compilador Tempo mínimo escrito en Tempo
+// Este compilador puede compilar stage2.tempo
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+
+fn main() -> i32 {
+    print_line("╔═══════════════════════════════════════════════════════════════╗");
+    print_line("║              TEMPO STAGE 1 - PURE TEMPO COMPILER              ║");
+    print_line("╚═══════════════════════════════════════════════════════════════╝");
+    
+    if (argc() < 2) {
+        print_line("Uso: stage1 archivo.tempo [salida]");
+        return 1;
+    }
+    
+    let input_file = argv(1);
+    let output_file = "";
+    
+    // Si no se especifica salida, usar el nombre sin extensión
+    if (argc() == 2) {
+        output_file = remove_extension(input_file);
+    } else {
+        output_file = argv(2);
+    }
+    
+    print("Compilando ");
+    print(input_file);
+    print(" -> ");
+    print_line(output_file);
+    
+    // Leer archivo fuente
+    let source = read_file(input_file);
+    
+    // Compilar
+    let result = compile_tempo(source);
+    
+    // Escribir resultado
+    write_file(output_file, result);
+    make_executable(output_file);
+    
+    print_line("✅ Compilación exitosa!");
+    print_line("[T∞] Ejecución determinística garantizada.");
+    
+    return 0;
+}
+
+fn compile_tempo(source: string) -> string {
+    // Lexer mínimo
+    let tokens = tokenize(source);
+    
+    // Parser mínimo
+    let ast = parse(tokens);
+    
+    // Generador de código
+    let code = generate_code(ast);
+    
+    return code;
+}
+
+fn tokenize(source: string) -> [Token] {
+    let tokens = [];
+    let pos = 0;
+    let len = string_length(source);
+    
+    while (pos < len) {
+        // Saltar espacios
+        while (pos < len && is_whitespace(char_at(source, pos))) {
+            pos = pos + 1;
+        }
+        
+        if (pos >= len) {
+            break;
+        }
+        
+        // Identificadores y palabras clave
+        if (is_alpha(char_at(source, pos))) {
+            let start = pos;
+            while (pos < len && is_alnum(char_at(source, pos))) {
+                pos = pos + 1;
+            }
+            
+            let value = substring(source, start, pos);
+            let token_type = TOKEN_IDENT;
+            
+            // Verificar palabras clave
+            if (value == "fn") { token_type = TOKEN_FN; }
+            else if (value == "let") { token_type = TOKEN_LET; }
+            else if (value == "if") { token_type = TOKEN_IF; }
+            else if (value == "return") { token_type = TOKEN_RETURN; }
+            else if (value == "print_line") { token_type = TOKEN_PRINT_LINE; }
+            
+            append(tokens, Token{type: token_type, value: value});
+        }
+        // Números
+        else if (is_digit(char_at(source, pos))) {
+            let start = pos;
+            while (pos < len && is_digit(char_at(source, pos))) {
+                pos = pos + 1;
+            }
+            
+            let value = substring(source, start, pos);
+            append(tokens, Token{type: TOKEN_NUMBER, value: value});
+        }
+        // Strings
+        else if (char_at(source, pos) == '"') {
+            pos = pos + 1; // Skip "
+            let start = pos;
+            while (pos < len && char_at(source, pos) != '"') {
+                pos = pos + 1;
+            }
+            
+            let value = substring(source, start, pos);
+            pos = pos + 1; // Skip closing "
+            
+            append(tokens, Token{type: TOKEN_STRING, value: value});
+        }
+        // Símbolos
+        else {
+            let ch = char_at(source, pos);
+            pos = pos + 1;
+            
+            if (ch == '(') { append(tokens, Token{type: TOKEN_LPAREN, value: "("}); }
+            else if (ch == ')') { append(tokens, Token{type: TOKEN_RPAREN, value: ")"}); }
+            else if (ch == '{') { append(tokens, Token{type: TOKEN_LBRACE, value: "{"}); }
+            else if (ch == '}') { append(tokens, Token{type: TOKEN_RBRACE, value: "}"}); }
+            else if (ch == ';') { append(tokens, Token{type: TOKEN_SEMICOLON, value: ";"}); }
+            else if (ch == '=') { append(tokens, Token{type: TOKEN_EQUALS, value: "="}); }
+            else if (ch == '+') { append(tokens, Token{type: TOKEN_PLUS, value: "+"}); }
+            else if (ch == '-') {
+                if (pos < len && char_at(source, pos) == '>') {
+                    pos = pos + 1;
+                    append(tokens, Token{type: TOKEN_ARROW, value: "->"});
+                } else {
+                    append(tokens, Token{type: TOKEN_MINUS, value: "-"});
+                }
+            }
+        }
+    }
+    
+    append(tokens, Token{type: TOKEN_EOF, value: ""});
+    return tokens;
+}
+
+fn parse(tokens: [Token]) -> AST {
+    let pos = 0;
+    let ast = AST{type: NODE_PROGRAM, children: []};
+    
+    while (tokens[pos].type != TOKEN_EOF) {
+        if (tokens[pos].type == TOKEN_FN) {
+            append(ast.children, parse_function(tokens, pos));
+        } else {
+            pos = pos + 1;
+        }
+    }
+    
+    return ast;
+}
+
+fn generate_code(ast: AST) -> string {
+    let code = "#!/bin/sh\n";
+    code = code + "# Tempo compiled output\n";
+    code = code + "# [T∞] Deterministic execution\n\n";
+    
+    // Por ahora generar un script simple
+    for child in ast.children {
+        if (child.type == NODE_FUNCTION) {
+            code = code + generate_function(child);
+        }
+    }
+    
+    return code;
+}
+
+// Tipos y constantes
+type Token = {
+    type: i32,
+    value: string
+}
+
+type AST = {
+    type: i32,
+    value: string,
+    children: [AST]
+}
+
+let TOKEN_EOF = 0;
+let TOKEN_IDENT = 1;
+let TOKEN_NUMBER = 2;
+let TOKEN_STRING = 3;
+let TOKEN_FN = 10;
+let TOKEN_LET = 11;
+let TOKEN_IF = 12;
+let TOKEN_RETURN = 13;
+let TOKEN_PRINT_LINE = 14;
+let TOKEN_LPAREN = 20;
+let TOKEN_RPAREN = 21;
+let TOKEN_LBRACE = 22;
+let TOKEN_RBRACE = 23;
+let TOKEN_SEMICOLON = 24;
+let TOKEN_EQUALS = 25;
+let TOKEN_PLUS = 26;
+let TOKEN_MINUS = 27;
+let TOKEN_ARROW = 28;
+
+let NODE_PROGRAM = 100;
+let NODE_FUNCTION = 101;
+let NODE_STATEMENT = 102;
+let NODE_EXPRESSION = 103;

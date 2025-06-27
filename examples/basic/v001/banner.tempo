@@ -1,0 +1,14 @@
+// Tempo Banner Display
+fn main() -> i32 {
+    print_line("╔═══════════════════════════════════════╗");
+    print_line("║       TEMPO PROGRAMMING LANGUAGE      ║");
+    print_line("║              v0.0.1                   ║");
+    print_line("╠═══════════════════════════════════════╣");
+    print_line("║  🛡️  Security  ⚖️  Balance  ⚡ Speed  ║");
+    print_line("║         100% Deterministic            ║");
+    print_line("║          Zero Dependencies            ║");
+    print_line("╚═══════════════════════════════════════╝");
+    print_line("");
+    print_line("The future of systems programming");
+    return 0;
+}

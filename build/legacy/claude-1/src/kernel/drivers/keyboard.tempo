@@ -1,0 +1,599 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Keyboard Driver
+// Implements PS/2 keyboard support with scancode translation
+
+module kernel.drivers.keyboard
+
+import kernel.ipc.channels
+
+// Keyboard driver state
+struct KeyboardDriver {
+    // Keyboard state
+    shift_pressed: bool
+    ctrl_pressed: bool
+    alt_pressed: bool
+    caps_lock: bool
+    num_lock: bool
+    scroll_lock: bool
+    
+    // Key buffer
+    buffer: CircularBuffer
+    
+    // Input channel for IPC
+    input_channel: u32
+    
+    // Statistics
+    keystrokes: u64
+    interrupts: u64
+    errors: u64
+    
+    // Scancode set
+    scancode_set: u8
+    
+    lock: SpinLock
+}
+
+// Circular buffer for keystrokes
+struct CircularBuffer {
+    data: [BUFFER_SIZE]KeyEvent
+    head: usize
+    tail: usize
+    count: usize
+}
+
+// Key event structure
+struct KeyEvent {
+    scancode: u8
+    keycode: u16
+    char: u8
+    modifiers: u8
+    pressed: bool
+}
+
+// Keyboard ports
+const KB_DATA_PORT = 0x60
+const KB_STATUS_PORT = 0x64
+const KB_COMMAND_PORT = 0x64
+
+// Keyboard commands
+const KB_CMD_LED = 0xED
+const KB_CMD_ECHO = 0xEE
+const KB_CMD_SCANCODE = 0xF0
+const KB_CMD_IDENTIFY = 0xF2
+const KB_CMD_TYPEMATIC = 0xF3
+const KB_CMD_ENABLE = 0xF4
+const KB_CMD_DISABLE = 0xF5
+const KB_CMD_RESET = 0xFF
+
+// Controller commands
+const CTRL_CMD_READ_CFG = 0x20
+const CTRL_CMD_WRITE_CFG = 0x60
+const CTRL_CMD_SELF_TEST = 0xAA
+const CTRL_CMD_KB_TEST = 0xAB
+const CTRL_CMD_KB_DISABLE = 0xAD
+const CTRL_CMD_KB_ENABLE = 0xAE
+
+// Status register bits
+const KB_STATUS_OUTPUT_FULL = 1 << 0
+const KB_STATUS_INPUT_FULL = 1 << 1
+const KB_STATUS_SYSTEM = 1 << 2
+const KB_STATUS_COMMAND = 1 << 3
+const KB_STATUS_TIMEOUT = 1 << 6
+const KB_STATUS_PARITY = 1 << 7
+
+// Modifier keys
+const MOD_SHIFT = 1 << 0
+const MOD_CTRL = 1 << 1
+const MOD_ALT = 1 << 2
+const MOD_CAPS = 1 << 3
+const MOD_NUM = 1 << 4
+const MOD_SCROLL = 1 << 5
+
+const BUFFER_SIZE = 256
+const KEYBOARD_IRQ = 1
+
+// Scancode to ASCII translation tables
+const scancode_to_ascii: [128]u8 = [
+    0,  27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, '7', '8', '9', '-', '4', '5', '6', '+', '1',
+    '2', '3', '0', '.', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+]
+
+const scancode_to_ascii_shift: [128]u8 = [
+    0,  27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b', '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0, 'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, '7', '8', '9', '-', '4', '5', '6', '+', '1',
+    '2', '3', '0', '.', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+]
+
+// Special key scancodes
+const KEY_ESC = 0x01
+const KEY_BACKSPACE = 0x0E
+const KEY_TAB = 0x0F
+const KEY_ENTER = 0x1C
+const KEY_CTRL = 0x1D
+const KEY_LSHIFT = 0x2A
+const KEY_RSHIFT = 0x36
+const KEY_ALT = 0x38
+const KEY_CAPS = 0x3A
+const KEY_F1 = 0x3B
+const KEY_F2 = 0x3C
+const KEY_F3 = 0x3D
+const KEY_F4 = 0x3E
+const KEY_F5 = 0x3F
+const KEY_F6 = 0x40
+const KEY_F7 = 0x41
+const KEY_F8 = 0x42
+const KEY_F9 = 0x43
+const KEY_F10 = 0x44
+const KEY_NUM = 0x45
+const KEY_SCROLL = 0x46
+const KEY_F11 = 0x57
+const KEY_F12 = 0x58
+
+// Extended scancodes (E0 prefix)
+const KEY_INSERT = 0x52
+const KEY_HOME = 0x47
+const KEY_PAGEUP = 0x49
+const KEY_DELETE = 0x53
+const KEY_END = 0x4F
+const KEY_PAGEDOWN = 0x51
+const KEY_RIGHT = 0x4D
+const KEY_LEFT = 0x4B
+const KEY_DOWN = 0x50
+const KEY_UP = 0x48
+
+// Initialize keyboard driver
+@export
+fn init() -> *KeyboardDriver {
+    let kbd = alloc(KeyboardDriver)
+    
+    kbd.buffer = CircularBuffer{
+        head: 0,
+        tail: 0,
+        count: 0
+    }
+    
+    kbd.scancode_set = 1  // Default to set 1
+    kbd.lock = SpinLock{}
+    
+    // Initialize keyboard controller
+    if !init_controller() {
+        kprint("[keyboard] Failed to initialize controller\n")
+        return null
+    }
+    
+    // Initialize keyboard
+    if !init_keyboard() {
+        kprint("[keyboard] Failed to initialize keyboard\n")
+        return null
+    }
+    
+    // Create input channel
+    kbd.input_channel = channels.create("keyboard_input", 256)
+    
+    // Register interrupt handler
+    register_interrupt_handler(KEYBOARD_IRQ, keyboard_interrupt_handler)
+    
+    // Enable keyboard interrupts
+    enable_keyboard()
+    
+    kprint("[keyboard] Driver initialized\n")
+    
+    return kbd
+}
+
+// Initialize keyboard controller
+fn init_controller() -> bool {
+    // Disable devices
+    send_controller_command(CTRL_CMD_KB_DISABLE)
+    
+    // Flush output buffer
+    while (inb(KB_STATUS_PORT) & KB_STATUS_OUTPUT_FULL) != 0 {
+        inb(KB_DATA_PORT)
+    }
+    
+    // Self test
+    send_controller_command(CTRL_CMD_SELF_TEST)
+    if wait_for_data() != 0x55 {
+        return false
+    }
+    
+    // Test keyboard interface
+    send_controller_command(CTRL_CMD_KB_TEST)
+    if wait_for_data() != 0x00 {
+        return false
+    }
+    
+    // Enable keyboard
+    send_controller_command(CTRL_CMD_KB_ENABLE)
+    
+    // Configure controller
+    send_controller_command(CTRL_CMD_READ_CFG)
+    let config = wait_for_data()
+    config |= 0x01  // Enable keyboard interrupt
+    config &= ~0x10  // Enable keyboard
+    send_controller_command(CTRL_CMD_WRITE_CFG)
+    send_data(config)
+    
+    return true
+}
+
+// Initialize keyboard
+fn init_keyboard() -> bool {
+    // Reset keyboard
+    if !send_keyboard_command(KB_CMD_RESET) {
+        return false
+    }
+    
+    // Wait for self-test result
+    if wait_for_data() != 0xAA {
+        return false
+    }
+    
+    // Set typematic rate/delay
+    send_keyboard_command(KB_CMD_TYPEMATIC)
+    send_data(0x20)  // 500ms delay, 10.9 chars/sec
+    
+    // Enable scanning
+    send_keyboard_command(KB_CMD_ENABLE)
+    
+    // Set LEDs
+    update_leds()
+    
+    return true
+}
+
+// Keyboard interrupt handler
+fn keyboard_interrupt_handler(frame: *InterruptFrame) {
+    let kbd = get_keyboard()
+    kbd.interrupts++
+    
+    // Read scancode
+    let scancode = inb(KB_DATA_PORT)
+    
+    // Handle extended scancode
+    static extended: bool = false
+    if scancode == 0xE0 {
+        extended = true
+        send_eoi(KEYBOARD_IRQ)
+        return
+    }
+    
+    // Process scancode
+    let event = process_scancode(kbd, scancode, extended)
+    extended = false
+    
+    if event.keycode != 0 {
+        // Add to buffer
+        add_to_buffer(kbd, event)
+        
+        // Send to channel
+        let data = &event as []u8
+        channels.try_send(kbd.input_channel, data, sizeof(KeyEvent))
+    }
+    
+    // Send EOI
+    send_eoi(KEYBOARD_IRQ)
+}
+
+// Process scancode into key event
+fn process_scancode(kbd: *KeyboardDriver, scancode: u8, extended: bool) -> KeyEvent {
+    let mut event = KeyEvent{
+        scancode: scancode,
+        keycode: 0,
+        char: 0,
+        modifiers: 0,
+        pressed: (scancode & 0x80) == 0
+    }
+    
+    // Remove release bit
+    let key = scancode & 0x7F
+    
+    // Update modifier states
+    match key {
+        KEY_LSHIFT, KEY_RSHIFT -> {
+            kbd.shift_pressed = event.pressed
+        }
+        KEY_CTRL -> {
+            kbd.ctrl_pressed = event.pressed
+        }
+        KEY_ALT -> {
+            kbd.alt_pressed = event.pressed
+        }
+        KEY_CAPS -> {
+            if event.pressed {
+                kbd.caps_lock = !kbd.caps_lock
+                update_leds()
+            }
+        }
+        KEY_NUM -> {
+            if event.pressed {
+                kbd.num_lock = !kbd.num_lock
+                update_leds()
+            }
+        }
+        KEY_SCROLL -> {
+            if event.pressed {
+                kbd.scroll_lock = !kbd.scroll_lock
+                update_leds()
+            }
+        }
+    }
+    
+    // Set modifiers
+    if kbd.shift_pressed { event.modifiers |= MOD_SHIFT }
+    if kbd.ctrl_pressed { event.modifiers |= MOD_CTRL }
+    if kbd.alt_pressed { event.modifiers |= MOD_ALT }
+    if kbd.caps_lock { event.modifiers |= MOD_CAPS }
+    if kbd.num_lock { event.modifiers |= MOD_NUM }
+    if kbd.scroll_lock { event.modifiers |= MOD_SCROLL }
+    
+    // Translate to keycode
+    if extended {
+        event.keycode = translate_extended(key)
+    } else {
+        event.keycode = key
+    }
+    
+    // Translate to ASCII if applicable
+    if event.pressed && !extended && key < 128 {
+        if kbd.shift_pressed {
+            event.char = scancode_to_ascii_shift[key]
+        } else {
+            event.char = scancode_to_ascii[key]
+        }
+        
+        // Handle caps lock for letters
+        if kbd.caps_lock && event.char >= 'a' && event.char <= 'z' {
+            event.char -= 32  // Convert to uppercase
+        } else if kbd.caps_lock && event.char >= 'A' && event.char <= 'Z' {
+            event.char += 32  // Convert to lowercase
+        }
+        
+        // Handle Ctrl combinations
+        if kbd.ctrl_pressed && event.char >= 'a' && event.char <= 'z' {
+            event.char -= 96  // Ctrl+A = 1, etc.
+        }
+    }
+    
+    return event
+}
+
+// Translate extended scancodes
+fn translate_extended(scancode: u8) -> u16 {
+    return 0x100 | scancode  // Extended keys have bit 8 set
+}
+
+// Add event to buffer
+fn add_to_buffer(kbd: *KeyboardDriver, event: KeyEvent) {
+    kbd.lock.acquire()
+    defer kbd.lock.release()
+    
+    if kbd.buffer.count >= BUFFER_SIZE {
+        // Buffer full, drop oldest
+        kbd.buffer.head = (kbd.buffer.head + 1) % BUFFER_SIZE
+        kbd.buffer.count--
+    }
+    
+    kbd.buffer.data[kbd.buffer.tail] = event
+    kbd.buffer.tail = (kbd.buffer.tail + 1) % BUFFER_SIZE
+    kbd.buffer.count++
+    
+    kbd.keystrokes++
+}
+
+// Read key event from buffer
+@export
+fn read_key() -> KeyEvent {
+    let kbd = get_keyboard()
+    
+    kbd.lock.acquire()
+    defer kbd.lock.release()
+    
+    if kbd.buffer.count == 0 {
+        return KeyEvent{}  // Empty event
+    }
+    
+    let event = kbd.buffer.data[kbd.buffer.head]
+    kbd.buffer.head = (kbd.buffer.head + 1) % BUFFER_SIZE
+    kbd.buffer.count--
+    
+    return event
+}
+
+// Check if key available
+@export
+fn has_key() -> bool {
+    let kbd = get_keyboard()
+    return kbd.buffer.count > 0
+}
+
+// Wait for key press
+@export
+fn wait_key() -> KeyEvent {
+    while !has_key() {
+        process.yield()
+    }
+    return read_key()
+}
+
+// Get character (blocking)
+@export
+fn getchar() -> u8 {
+    loop {
+        let event = wait_key()
+        if event.pressed && event.char != 0 {
+            return event.char
+        }
+    }
+}
+
+// Update keyboard LEDs
+fn update_leds() {
+    let kbd = get_keyboard()
+    
+    let mut leds: u8 = 0
+    if kbd.scroll_lock { leds |= 0x01 }
+    if kbd.num_lock { leds |= 0x02 }
+    if kbd.caps_lock { leds |= 0x04 }
+    
+    send_keyboard_command(KB_CMD_LED)
+    send_data(leds)
+}
+
+// Enable keyboard
+fn enable_keyboard() {
+    send_keyboard_command(KB_CMD_ENABLE)
+}
+
+// Disable keyboard
+@export
+fn disable_keyboard() {
+    send_keyboard_command(KB_CMD_DISABLE)
+}
+
+// Controller communication functions
+fn send_controller_command(cmd: u8) {
+    wait_for_input_buffer()
+    outb(KB_COMMAND_PORT, cmd)
+}
+
+fn send_keyboard_command(cmd: u8) -> bool {
+    wait_for_input_buffer()
+    outb(KB_DATA_PORT, cmd)
+    
+    // Wait for ACK
+    return wait_for_data() == 0xFA
+}
+
+fn send_data(data: u8) {
+    wait_for_input_buffer()
+    outb(KB_DATA_PORT, data)
+}
+
+fn wait_for_data() -> u8 {
+    let timeout = 100000
+    
+    for i in 0..timeout {
+        if (inb(KB_STATUS_PORT) & KB_STATUS_OUTPUT_FULL) != 0 {
+            return inb(KB_DATA_PORT)
+        }
+        io_delay()
+    }
+    
+    return 0xFF  // Timeout
+}
+
+fn wait_for_input_buffer() {
+    let timeout = 100000
+    
+    for i in 0..timeout {
+        if (inb(KB_STATUS_PORT) & KB_STATUS_INPUT_FULL) == 0 {
+            return
+        }
+        io_delay()
+    }
+}
+
+// Get input line (with basic editing)
+@export
+fn getline(buffer: []u8, max_len: usize) -> usize {
+    let mut pos: usize = 0
+    
+    loop {
+        let ch = getchar()
+        
+        match ch {
+            '\n' -> {
+                buffer[pos] = 0
+                kprint("\n")
+                return pos
+            }
+            '\b' -> {
+                if pos > 0 {
+                    pos--
+                    kprint("\b \b")  // Backspace, space, backspace
+                }
+            }
+            _ -> {
+                if pos < max_len - 1 {
+                    buffer[pos] = ch
+                    pos++
+                    kprint("%c", ch)
+                }
+            }
+        }
+    }
+}
+
+// Get keyboard statistics
+@export
+fn get_stats() -> KeyboardStats {
+    let kbd = get_keyboard()
+    
+    return KeyboardStats{
+        keystrokes: kbd.keystrokes,
+        interrupts: kbd.interrupts,
+        errors: kbd.errors,
+        buffer_count: kbd.buffer.count,
+        shift: kbd.shift_pressed,
+        ctrl: kbd.ctrl_pressed,
+        alt: kbd.alt_pressed,
+        caps_lock: kbd.caps_lock,
+        num_lock: kbd.num_lock,
+        scroll_lock: kbd.scroll_lock
+    }
+}
+
+// Get keyboard driver instance
+fn get_keyboard() -> *KeyboardDriver {
+    return kernel.kernel_state.keyboard
+}
+
+// I/O delay
+fn io_delay() {
+    for i in 0..4 {
+        inb(0x80)  // Unused port
+    }
+}
+
+// Architecture-specific functions
+@extern fn register_interrupt_handler(irq: u8, handler: fn(*InterruptFrame))
+@extern fn send_eoi(irq: u8)
+@extern fn outb(port: u16, value: u8)
+@extern fn inb(port: u16) -> u8
+@extern fn kprint(format: string, args: ...)
+
+// Keyboard statistics
+struct KeyboardStats {
+    keystrokes: u64
+    interrupts: u64
+    errors: u64
+    buffer_count: usize
+    shift: bool
+    ctrl: bool
+    alt: bool
+    caps_lock: bool
+    num_lock: bool
+    scroll_lock: bool
+}

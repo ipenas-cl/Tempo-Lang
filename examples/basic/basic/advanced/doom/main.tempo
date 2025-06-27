@@ -1,0 +1,342 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// DOOM for AtomicOS - Main Game Loop
+// Deterministic implementation with fixed timestep
+
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+const FIXED_TIMESTEP: u32 = 35; // 35ms per tic (35Hz, original DOOM timing)
+const MAX_FRAMESKIP: u32 = 5;
+
+struct DoomEngine {
+    renderer: Renderer,
+    wad: WadLoader,
+    game: GameLogic,
+    network: NetworkManager,
+    audio: AudioSystem,
+    
+    // Timing
+    current_tic: u32,
+    accumulator: u32,
+    last_time: u64,
+    
+    // Demo recording/playback
+    demo_mode: DemoMode,
+    demo_buffer: Vec<u8>,
+    demo_position: usize,
+    
+    // RNG state
+    rng_seed: u32,
+    rng_index: u32,
+}
+
+enum DemoMode {
+    None,
+    Recording,
+    Playing,
+}
+
+struct InputState {
+    forward_move: i8,
+    side_move: i8,
+    angle_turn: i16,
+    buttons: u8, // fire, use, speed, strafe bits
+}
+
+impl DoomEngine {
+    fn new() -> DoomEngine {
+        DoomEngine {
+            renderer: Renderer::new(),
+            wad: WadLoader::new(),
+            game: GameLogic::new(),
+            network: NetworkManager::new(),
+            audio: AudioSystem::new(),
+            current_tic: 0,
+            accumulator: 0,
+            last_time: 0,
+            demo_mode: DemoMode::None,
+            demo_buffer: Vec::new(),
+            demo_position: 0,
+            rng_seed: 0x12345678,
+            rng_index: 0,
+        }
+    }
+    
+    fn init(&mut self, wad_path: &str, args: &[&str]) {
+        // Load WAD file
+        self.wad.load(wad_path);
+        
+        // Initialize subsystems
+        self.renderer.init(&self.wad);
+        self.game.init(&self.wad);
+        self.audio.init(&self.wad);
+        
+        // Parse command line args
+        for i in 0..args.len() {
+            match args[i] {
+                "-record" => {
+                    if i + 1 < args.len() {
+                        self.start_recording(args[i + 1]);
+                    }
+                },
+                "-playdemo" => {
+                    if i + 1 < args.len() {
+                        self.start_playback(args[i + 1]);
+                    }
+                },
+                "-net" => {
+                    if i + 1 < args.len() {
+                        self.network.init(args[i + 1].parse().unwrap());
+                    }
+                },
+                "-seed" => {
+                    if i + 1 < args.len() {
+                        self.rng_seed = args[i + 1].parse().unwrap();
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+    
+    fn run(&mut self) {
+        self.last_time = get_time_ms();
+        
+        loop {
+            let current_time = get_time_ms();
+            let frame_time = current_time - self.last_time;
+            self.last_time = current_time;
+            
+            self.accumulator += frame_time as u32;
+            
+            // Fixed timestep with interpolation
+            let mut updates = 0;
+            while self.accumulator >= FIXED_TIMESTEP && updates < MAX_FRAMESKIP {
+                self.update_tic();
+                self.accumulator -= FIXED_TIMESTEP;
+                updates += 1;
+            }
+            
+            // Render with interpolation
+            let interpolation = self.accumulator as f32 / FIXED_TIMESTEP as f32;
+            self.render(interpolation);
+            
+            // Check for quit
+            if self.should_quit() {
+                break;
+            }
+        }
+    }
+    
+    fn update_tic(&mut self) {
+        // Get input for this tic
+        let input = self.get_input();
+        
+        // Record demo if recording
+        if let DemoMode::Recording = self.demo_mode {
+            self.record_input(&input);
+        }
+        
+        // Network synchronization
+        if self.network.is_connected() {
+            self.network.sync_tic(self.current_tic, &input);
+        }
+        
+        // Update game logic deterministically
+        self.game.update_tic(self.current_tic, &input, &mut self.rng_index);
+        
+        // Update audio
+        self.audio.update_tic(self.current_tic, &self.game);
+        
+        self.current_tic += 1;
+    }
+    
+    fn get_input(&mut self) -> InputState {
+        match self.demo_mode {
+            DemoMode::Playing => self.read_demo_input(),
+            _ => self.read_player_input(),
+        }
+    }
+    
+    fn read_player_input(&self) -> InputState {
+        let keys = get_keyboard_state();
+        let mouse = get_mouse_state();
+        
+        let mut input = InputState {
+            forward_move: 0,
+            side_move: 0,
+            angle_turn: 0,
+            buttons: 0,
+        };
+        
+        // Keyboard movement
+        if keys.is_pressed(KEY_W) || keys.is_pressed(KEY_UP) {
+            input.forward_move = 50;
+        }
+        if keys.is_pressed(KEY_S) || keys.is_pressed(KEY_DOWN) {
+            input.forward_move = -50;
+        }
+        if keys.is_pressed(KEY_A) {
+            input.side_move = -40;
+        }
+        if keys.is_pressed(KEY_D) {
+            input.side_move = 40;
+        }
+        
+        // Mouse look (deterministic conversion)
+        input.angle_turn = (mouse.delta_x * 8) as i16;
+        
+        // Buttons
+        if keys.is_pressed(KEY_CTRL) || mouse.left_button {
+            input.buttons |= 0x01; // Fire
+        }
+        if keys.is_pressed(KEY_SPACE) {
+            input.buttons |= 0x02; // Use
+        }
+        if keys.is_pressed(KEY_SHIFT) {
+            input.buttons |= 0x04; // Speed
+        }
+        if keys.is_pressed(KEY_ALT) {
+            input.buttons |= 0x08; // Strafe
+        }
+        
+        input
+    }
+    
+    fn render(&mut self, interpolation: f32) {
+        // Get interpolated game state
+        let view_state = self.game.get_view_state(interpolation);
+        
+        // Render frame
+        self.renderer.begin_frame();
+        self.renderer.render_3d_view(&view_state, &self.game.get_map_data());
+        self.renderer.render_hud(&self.game.get_player_state());
+        self.renderer.end_frame();
+    }
+    
+    fn start_recording(&mut self, demo_name: &str) {
+        self.demo_mode = DemoMode::Recording;
+        self.demo_buffer.clear();
+        
+        // Write demo header
+        self.demo_buffer.extend_from_slice(b"DEMO");
+        self.demo_buffer.extend_from_slice(&1u32.to_le_bytes()); // Version
+        self.demo_buffer.extend_from_slice(&self.rng_seed.to_le_bytes());
+        self.demo_buffer.extend_from_slice(&self.game.get_map_number().to_le_bytes());
+        self.demo_buffer.extend_from_slice(&self.game.get_skill().to_le_bytes());
+    }
+    
+    fn start_playback(&mut self, demo_name: &str) {
+        // Load demo file
+        self.demo_buffer = load_file(demo_name);
+        self.demo_position = 0;
+        
+        // Read header
+        if &self.demo_buffer[0..4] != b"DEMO" {
+            panic!("Invalid demo file");
+        }
+        self.demo_position = 4;
+        
+        let version = self.read_u32();
+        self.rng_seed = self.read_u32();
+        let map_num = self.read_u32();
+        let skill = self.read_u32();
+        
+        // Initialize game with demo parameters
+        self.game.start_map(map_num, skill);
+        self.demo_mode = DemoMode::Playing;
+    }
+    
+    fn record_input(&mut self, input: &InputState) {
+        self.demo_buffer.push(input.forward_move as u8);
+        self.demo_buffer.push(input.side_move as u8);
+        self.demo_buffer.push((input.angle_turn >> 8) as u8);
+        self.demo_buffer.push((input.angle_turn & 0xFF) as u8);
+        self.demo_buffer.push(input.buttons);
+    }
+    
+    fn read_demo_input(&mut self) -> InputState {
+        if self.demo_position + 5 > self.demo_buffer.len() {
+            // Demo ended
+            self.demo_mode = DemoMode::None;
+            return InputState {
+                forward_move: 0,
+                side_move: 0,
+                angle_turn: 0,
+                buttons: 0,
+            };
+        }
+        
+        let input = InputState {
+            forward_move: self.demo_buffer[self.demo_position] as i8,
+            side_move: self.demo_buffer[self.demo_position + 1] as i8,
+            angle_turn: ((self.demo_buffer[self.demo_position + 2] as i16) << 8) |
+                        (self.demo_buffer[self.demo_position + 3] as i16),
+            buttons: self.demo_buffer[self.demo_position + 4],
+        };
+        
+        self.demo_position += 5;
+        input
+    }
+    
+    fn read_u32(&mut self) -> u32 {
+        let bytes = &self.demo_buffer[self.demo_position..self.demo_position + 4];
+        self.demo_position += 4;
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+    
+    fn should_quit(&self) -> bool {
+        get_keyboard_state().is_pressed(KEY_ESC)
+    }
+}
+
+// Deterministic random number generator (same as original DOOM)
+fn p_random(index: &mut u32) -> u8 {
+    const RNDTABLE: [u8; 256] = [
+        0,   8,  109, 220, 222, 241, 149, 107,  75, 248, 254, 140,  16,  66,
+        74,  21, 211,  47,  80, 242, 154,  27, 205, 128, 161,  89,  77,  36,
+        95, 110,  85,  48, 212, 140, 211, 249,  22,  79, 200,  50,  28, 188,
+        52, 140, 202, 120,  68, 145,  62,  70, 184, 190,  91, 197, 152, 224,
+        149, 104,  25, 178, 252, 182, 202, 182, 141, 197,   4,  81, 181, 242,
+        145,  42,  39, 227, 156, 198, 225, 193, 219,  93, 122, 175, 249,   0,
+        175, 143,  70, 239,  46, 246, 163,  53, 163, 109, 168, 135,   2, 235,
+        25,  92,  20, 145, 138,  77,  69, 166,  78, 176, 173, 212, 166, 113,
+        94, 161,  41,  50, 239,  49, 111, 164,  70,  60,   2,  37, 171,  75,
+        136, 156,  11,  56,  42, 146, 138, 229,  73, 146,  77,  61,  98, 196,
+        135, 106,  63, 197, 195,  86,  96, 203, 113, 101, 170, 247, 181, 113,
+        80, 250, 108,   7, 255, 237, 129, 226,  79, 107, 112, 166, 103, 241,
+        24, 223, 239, 120, 198,  58,  60,  82, 128,   3, 184,  66, 143, 224,
+        145, 224,  81, 206, 163,  45,  63,  90, 168, 114,  59,  33, 159,  95,
+        28, 139, 123,  98, 125, 196,  15,  70, 194, 253,  54,  14, 109, 226,
+        71,  17, 161,  93, 186,  87, 244, 138,  20,  52, 123, 251,  26,  36,
+        17,  46,  52, 231, 232,  76,  31, 221,  84,  37, 216, 165, 212, 106,
+        197, 242,  98,  43,  39, 175, 254, 145, 190,  84, 118, 222, 187, 136,
+        120, 163, 236, 249
+    ];
+    
+    *index = (*index + 1) & 0xFF;
+    RNDTABLE[*index as usize]
+}
+
+// Platform-specific functions (to be implemented)
+extern fn get_time_ms() -> u64;
+extern fn get_keyboard_state() -> KeyboardState;
+extern fn get_mouse_state() -> MouseState;
+extern fn load_file(path: &str) -> Vec<u8>;
+
+fn main() {
+    let mut engine = DoomEngine::new();
+    let args = env_args();
+    engine.init("doom.wad", &args);
+    engine.run();
+}

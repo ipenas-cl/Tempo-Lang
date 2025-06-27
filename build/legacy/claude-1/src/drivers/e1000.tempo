@@ -1,0 +1,470 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// e1000.tempo - Intel E1000 network driver for AtomicOS
+// Provides deterministic bounded WCET driver with static allocation
+
+// E1000 PCI IDs
+const E1000_VENDOR_ID: u16 = 0x8086;
+const E1000_DEVICE_82540EM: u16 = 0x100E;
+const E1000_DEVICE_82545EM: u16 = 0x100F;
+const E1000_DEVICE_82574L: u16 = 0x10D3;
+
+// E1000 register offsets
+const E1000_CTRL: u32 = 0x0000;      // Device Control
+const E1000_STATUS: u32 = 0x0008;    // Device Status
+const E1000_EERD: u32 = 0x0014;      // EEPROM Read
+const E1000_ICR: u32 = 0x00C0;       // Interrupt Cause Read
+const E1000_IMS: u32 = 0x00D0;       // Interrupt Mask Set
+const E1000_IMC: u32 = 0x00D8;       // Interrupt Mask Clear
+const E1000_RCTL: u32 = 0x0100;      // Receive Control
+const E1000_TCTL: u32 = 0x0400;      // Transmit Control
+const E1000_TIPG: u32 = 0x0410;      // Transmit IPG
+const E1000_RDBAL: u32 = 0x2800;     // RX Descriptor Base Low
+const E1000_RDBAH: u32 = 0x2804;     // RX Descriptor Base High
+const E1000_RDLEN: u32 = 0x2808;     // RX Descriptor Length
+const E1000_RDH: u32 = 0x2810;       // RX Descriptor Head
+const E1000_RDT: u32 = 0x2818;       // RX Descriptor Tail
+const E1000_TDBAL: u32 = 0x3800;     // TX Descriptor Base Low
+const E1000_TDBAH: u32 = 0x3804;     // TX Descriptor Base High
+const E1000_TDLEN: u32 = 0x3808;     // TX Descriptor Length
+const E1000_TDH: u32 = 0x3810;       // TX Descriptor Head
+const E1000_TDT: u32 = 0x3818;       // TX Descriptor Tail
+const E1000_MTA: u32 = 0x5200;       // Multicast Table Array
+
+// Control register bits
+const E1000_CTRL_FD: u32 = 0x00000001;     // Full Duplex
+const E1000_CTRL_ASDE: u32 = 0x00000020;   // Auto-Speed Detection
+const E1000_CTRL_SLU: u32 = 0x00000040;    // Set Link Up
+const E1000_CTRL_RST: u32 = 0x04000000;    // Device Reset
+
+// Status register bits
+const E1000_STATUS_LU: u32 = 0x00000002;   // Link Up
+
+// Receive control bits
+const E1000_RCTL_EN: u32 = 0x00000002;     // Receiver Enable
+const E1000_RCTL_SBP: u32 = 0x00000004;    // Store Bad Packets
+const E1000_RCTL_UPE: u32 = 0x00000008;    // Unicast Promiscuous
+const E1000_RCTL_MPE: u32 = 0x00000010;    // Multicast Promiscuous
+const E1000_RCTL_LPE: u32 = 0x00000020;    // Long Packet Enable
+const E1000_RCTL_BAM: u32 = 0x00008000;    // Broadcast Accept Mode
+const E1000_RCTL_BSIZE_2048: u32 = 0x00000000;  // Buffer size 2048
+
+// Transmit control bits
+const E1000_TCTL_EN: u32 = 0x00000002;     // Transmit Enable
+const E1000_TCTL_PSP: u32 = 0x00000008;    // Pad Short Packets
+const E1000_TCTL_CT_SHIFT: u32 = 4;        // Collision Threshold
+const E1000_TCTL_COLD_SHIFT: u32 = 12;     // Collision Distance
+
+// Interrupt bits
+const E1000_ICR_TXDW: u32 = 0x00000001;    // Transmit Descriptor Written Back
+const E1000_ICR_RXT0: u32 = 0x00000080;    // Receiver Timer Interrupt
+
+// Descriptor structures
+struct E1000RxDesc {
+    addr: u64,
+    length: u16,
+    checksum: u16,
+    status: u8,
+    errors: u8,
+    special: u16,
+}
+
+struct E1000TxDesc {
+    addr: u64,
+    length: u16,
+    cso: u8,
+    cmd: u8,
+    status: u8,
+    css: u8,
+    special: u16,
+}
+
+// TX command bits
+const E1000_TXD_CMD_EOP: u8 = 0x01;   // End of Packet
+const E1000_TXD_CMD_IFCS: u8 = 0x02;  // Insert FCS
+const E1000_TXD_CMD_RS: u8 = 0x08;    // Report Status
+
+// RX/TX status bits  
+const E1000_RXD_STAT_DD: u8 = 0x01;   // Descriptor Done
+const E1000_RXD_STAT_EOP: u8 = 0x02;  // End of Packet
+const E1000_TXD_STAT_DD: u8 = 0x01;   // Descriptor Done
+
+// Ring sizes (must be power of 2)
+const E1000_NUM_RX_DESC: u32 = 32;
+const E1000_NUM_TX_DESC: u32 = 32;
+const E1000_RX_BUFFER_SIZE: u32 = 2048;
+
+// E1000 device structure
+struct E1000Device {
+    mmio_base: u64,
+    
+    // Descriptor rings (statically allocated)
+    rx_ring: [E1000RxDesc; E1000_NUM_RX_DESC],
+    tx_ring: [E1000TxDesc; E1000_NUM_TX_DESC],
+    
+    // Buffer pools
+    rx_buffers: [[u8; E1000_RX_BUFFER_SIZE]; E1000_NUM_RX_DESC],
+    
+    // Ring indices
+    rx_cur: u32,
+    tx_cur: u32,
+    
+    // MAC address
+    mac_addr: MacAddr,
+}
+
+// Global E1000 devices (support up to 2)
+static mut e1000_devices: [E1000Device; 2] = [{
+    mmio_base: 0,
+    rx_ring: [{addr: 0, length: 0, checksum: 0, status: 0, errors: 0, special: 0}; E1000_NUM_RX_DESC],
+    tx_ring: [{addr: 0, length: 0, cso: 0, cmd: 0, status: 0, css: 0, special: 0}; E1000_NUM_TX_DESC],
+    rx_buffers: [[0; E1000_RX_BUFFER_SIZE]; E1000_NUM_RX_DESC],
+    rx_cur: 0,
+    tx_cur: 0,
+    mac_addr: [0; 6],
+}; 2];
+
+// MMIO read/write helpers
+fn e1000_read32(dev: *mut E1000Device, reg: u32) -> u32 {
+    unsafe {
+        let addr = (*dev).mmio_base + reg as u64;
+        *(addr as *const u32)
+    }
+}
+
+fn e1000_write32(dev: *mut E1000Device, reg: u32, value: u32) {
+    unsafe {
+        let addr = (*dev).mmio_base + reg as u64;
+        *(addr as *mut u32) = value;
+    }
+}
+
+// Read MAC address from EEPROM - bounded time
+fn e1000_read_mac(dev: *mut E1000Device) {
+    // Read MAC from EEPROM at offset 0
+    for i in 0..3 {
+        // Start EEPROM read
+        e1000_write32(dev, E1000_EERD, (i << 8) | 0x01);
+        
+        // Wait for completion (bounded wait)
+        let mut timeout = 1000;
+        while timeout > 0 {
+            let val = e1000_read32(dev, E1000_EERD);
+            if val & 0x10 != 0 {  // Done bit
+                let data = (val >> 16) as u16;
+                unsafe {
+                    (*dev).mac_addr[i * 2] = data as u8;
+                    (*dev).mac_addr[i * 2 + 1] = (data >> 8) as u8;
+                }
+                break;
+            }
+            timeout -= 1;
+        }
+    }
+}
+
+// Initialize receive ring - bounded time
+fn e1000_init_rx(dev: *mut E1000Device) {
+    unsafe {
+        // Initialize descriptors
+        for i in 0..E1000_NUM_RX_DESC {
+            (*dev).rx_ring[i].addr = &(*dev).rx_buffers[i][0] as *const u8 as u64;
+            (*dev).rx_ring[i].length = 0;
+            (*dev).rx_ring[i].checksum = 0;
+            (*dev).rx_ring[i].status = 0;
+            (*dev).rx_ring[i].errors = 0;
+            (*dev).rx_ring[i].special = 0;
+        }
+        
+        // Set up receive ring
+        let ring_addr = &(*dev).rx_ring[0] as *const E1000RxDesc as u64;
+        e1000_write32(dev, E1000_RDBAL, ring_addr as u32);
+        e1000_write32(dev, E1000_RDBAH, (ring_addr >> 32) as u32);
+        e1000_write32(dev, E1000_RDLEN, E1000_NUM_RX_DESC * sizeof(E1000RxDesc) as u32);
+        e1000_write32(dev, E1000_RDH, 0);
+        e1000_write32(dev, E1000_RDT, E1000_NUM_RX_DESC - 1);
+        
+        (*dev).rx_cur = 0;
+    }
+}
+
+// Initialize transmit ring - bounded time
+fn e1000_init_tx(dev: *mut E1000Device) {
+    unsafe {
+        // Initialize descriptors
+        for i in 0..E1000_NUM_TX_DESC {
+            (*dev).tx_ring[i].addr = 0;
+            (*dev).tx_ring[i].length = 0;
+            (*dev).tx_ring[i].cso = 0;
+            (*dev).tx_ring[i].cmd = 0;
+            (*dev).tx_ring[i].status = E1000_TXD_STAT_DD;  // Mark as done
+            (*dev).tx_ring[i].css = 0;
+            (*dev).tx_ring[i].special = 0;
+        }
+        
+        // Set up transmit ring
+        let ring_addr = &(*dev).tx_ring[0] as *const E1000TxDesc as u64;
+        e1000_write32(dev, E1000_TDBAL, ring_addr as u32);
+        e1000_write32(dev, E1000_TDBAH, (ring_addr >> 32) as u32);
+        e1000_write32(dev, E1000_TDLEN, E1000_NUM_TX_DESC * sizeof(E1000TxDesc) as u32);
+        e1000_write32(dev, E1000_TDH, 0);
+        e1000_write32(dev, E1000_TDT, 0);
+        
+        (*dev).tx_cur = 0;
+    }
+}
+
+// Network device operations
+fn e1000_netdev_init(netdev: *mut Netdev) -> i32 {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    
+    // Reset device
+    e1000_write32(dev, E1000_CTRL, E1000_CTRL_RST);
+    
+    // Wait for reset (bounded)
+    let mut timeout = 1000;
+    while timeout > 0 {
+        if e1000_read32(dev, E1000_CTRL) & E1000_CTRL_RST == 0 {
+            break;
+        }
+        timeout -= 1;
+    }
+    
+    // Read MAC address
+    e1000_read_mac(dev);
+    unsafe {
+        eth_copy_mac(&mut (*netdev).mac_addr, &(*dev).mac_addr);
+    }
+    
+    // Initialize rings
+    e1000_init_rx(dev);
+    e1000_init_tx(dev);
+    
+    // Configure link
+    let ctrl = e1000_read32(dev, E1000_CTRL);
+    e1000_write32(dev, E1000_CTRL, ctrl | E1000_CTRL_SLU | E1000_CTRL_ASDE);
+    
+    // Configure receive control
+    e1000_write32(dev, E1000_RCTL, 
+                  E1000_RCTL_EN | E1000_RCTL_BAM | E1000_RCTL_BSIZE_2048);
+    
+    // Configure transmit control
+    e1000_write32(dev, E1000_TCTL,
+                  E1000_TCTL_EN | E1000_TCTL_PSP |
+                  (0x10 << E1000_TCTL_CT_SHIFT) |
+                  (0x40 << E1000_TCTL_COLD_SHIFT));
+    
+    // Set transmit IPG
+    e1000_write32(dev, E1000_TIPG, 0x0060200A);
+    
+    // Clear multicast table
+    for i in 0..128 {
+        e1000_write32(dev, E1000_MTA + i * 4, 0);
+    }
+    
+    // Enable interrupts
+    e1000_write32(dev, E1000_IMS, E1000_ICR_RXT0 | E1000_ICR_TXDW);
+    
+    return 0;
+}
+
+fn e1000_netdev_open(netdev: *mut Netdev) -> i32 {
+    // Already opened in init
+    return 0;
+}
+
+fn e1000_netdev_close(netdev: *mut Netdev) -> i32 {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    
+    // Disable interrupts
+    e1000_write32(dev, E1000_IMC, 0xFFFFFFFF);
+    
+    // Disable receive and transmit
+    e1000_write32(dev, E1000_RCTL, 0);
+    e1000_write32(dev, E1000_TCTL, 0);
+    
+    return 0;
+}
+
+fn e1000_netdev_transmit(netdev: *mut Netdev, frame: *mut FrameBuffer) -> i32 {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    
+    unsafe {
+        let idx = (*dev).tx_cur;
+        
+        // Check if descriptor is available
+        if (*dev).tx_ring[idx].status & E1000_TXD_STAT_DD == 0 {
+            return -1;  // Ring full
+        }
+        
+        // Set up descriptor
+        (*dev).tx_ring[idx].addr = (*frame).data.as_ptr() as u64;
+        (*dev).tx_ring[idx].length = (*frame).len as u16;
+        (*dev).tx_ring[idx].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
+        (*dev).tx_ring[idx].status = 0;
+        
+        // Update tail pointer
+        let next_idx = (idx + 1) % E1000_NUM_TX_DESC;
+        e1000_write32(dev, E1000_TDT, next_idx);
+        (*dev).tx_cur = next_idx;
+    }
+    
+    return 0;
+}
+
+fn e1000_netdev_set_mac(netdev: *mut Netdev, mac: *const MacAddr) -> i32 {
+    // E1000 doesn't support changing MAC in this implementation
+    return -1;
+}
+
+fn e1000_netdev_get_link_status(netdev: *mut Netdev) -> bool {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    let status = e1000_read32(dev, E1000_STATUS);
+    return status & E1000_STATUS_LU != 0;
+}
+
+fn e1000_netdev_set_multicast(netdev: *mut Netdev, enable: bool) -> i32 {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    let rctl = e1000_read32(dev, E1000_RCTL);
+    
+    if enable {
+        e1000_write32(dev, E1000_RCTL, rctl | E1000_RCTL_MPE);
+    } else {
+        e1000_write32(dev, E1000_RCTL, rctl & !E1000_RCTL_MPE);
+    }
+    
+    return 0;
+}
+
+fn e1000_netdev_set_promisc(netdev: *mut Netdev, enable: bool) -> i32 {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    let rctl = e1000_read32(dev, E1000_RCTL);
+    
+    if enable {
+        e1000_write32(dev, E1000_RCTL, rctl | E1000_RCTL_UPE);
+    } else {
+        e1000_write32(dev, E1000_RCTL, rctl & !E1000_RCTL_UPE);
+    }
+    
+    return 0;
+}
+
+// Network device operations table
+static e1000_netdev_ops: NetdevOps = {
+    init: e1000_netdev_init,
+    open: e1000_netdev_open,
+    close: e1000_netdev_close,
+    transmit: e1000_netdev_transmit,
+    set_mac: e1000_netdev_set_mac,
+    get_link_status: e1000_netdev_get_link_status,
+    set_multicast: e1000_netdev_set_multicast,
+    set_promisc: e1000_netdev_set_promisc,
+};
+
+// Interrupt handler - bounded time
+fn e1000_interrupt_handler(netdev: *mut Netdev) {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    
+    // Read and clear interrupt cause
+    let icr = e1000_read32(dev, E1000_ICR);
+    
+    // Handle receive interrupts
+    if icr & E1000_ICR_RXT0 != 0 {
+        e1000_rx_poll(netdev);
+    }
+    
+    // Handle transmit interrupts
+    if icr & E1000_ICR_TXDW != 0 {
+        // TX complete, poll netdev queue
+        netdev_tx_poll(netdev);
+    }
+}
+
+// Poll receive ring - bounded time
+fn e1000_rx_poll(netdev: *mut Netdev) {
+    let dev = unsafe { (*netdev).priv_data as *mut E1000Device };
+    
+    unsafe {
+        // Process up to all descriptors
+        for _ in 0..E1000_NUM_RX_DESC {
+            let idx = (*dev).rx_cur;
+            
+            // Check if descriptor has data
+            if (*dev).rx_ring[idx].status & E1000_RXD_STAT_DD == 0 {
+                break;  // No more packets
+            }
+            
+            // Check for errors
+            if (*dev).rx_ring[idx].errors != 0 {
+                (*netdev).stats.rx_errors += 1;
+            } else if (*dev).rx_ring[idx].status & E1000_RXD_STAT_EOP != 0 {
+                // Complete packet received
+                let len = (*dev).rx_ring[idx].length as u32;
+                netdev_rx(netdev, &(*dev).rx_buffers[idx][0], len);
+            }
+            
+            // Reset descriptor
+            (*dev).rx_ring[idx].status = 0;
+            
+            // Update indices
+            (*dev).rx_cur = (idx + 1) % E1000_NUM_RX_DESC;
+            e1000_write32(dev, E1000_RDT, idx);
+        }
+    }
+}
+
+// Probe and initialize E1000 device - bounded time
+fn e1000_probe(mmio_base: u64, device_id: u16) -> *mut Netdev {
+    static mut dev_count: u32 = 0;
+    
+    unsafe {
+        if dev_count >= 2 {
+            return null;  // Maximum devices reached
+        }
+        
+        let dev = &mut e1000_devices[dev_count];
+        dev.mmio_base = mmio_base;
+        
+        // Allocate network device
+        let name = "eth0\0";
+        if dev_count == 1 {
+            name = "eth1\0";
+        }
+        
+        let netdev = netdev_alloc(name.as_ptr(), &e1000_netdev_ops);
+        if netdev == null {
+            return null;
+        }
+        
+        (*netdev).priv_data = dev as *mut void;
+        
+        // Register device
+        if netdev_register(netdev) < 0 {
+            return null;
+        }
+        
+        dev_count += 1;
+        return netdev;
+    }
+}
+
+// Check if device is E1000 - O(1)
+fn e1000_is_supported(vendor_id: u16, device_id: u16) -> bool {
+    if vendor_id != E1000_VENDOR_ID {
+        return false;
+    }
+    
+    match device_id {
+        E1000_DEVICE_82540EM | E1000_DEVICE_82545EM | E1000_DEVICE_82574L => true,
+        _ => false,
+    }
+}

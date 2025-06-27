@@ -1,0 +1,312 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Fixed-Time Font Renderer for AtomicOS
+// Deterministic text rendering with static allocation
+// Uses embedded bitmap fonts for predictable performance
+
+#include <stdint.h>
+#include <stdbool.h>
+
+// Font metrics
+#define FONT_WIDTH 8
+#define FONT_HEIGHT 16
+#define FONT_FIRST_CHAR 32
+#define FONT_LAST_CHAR 126
+#define FONT_CHAR_COUNT (FONT_LAST_CHAR - FONT_FIRST_CHAR + 1)
+
+// Maximum text buffer size for static allocation
+#define MAX_TEXT_LENGTH 1024
+
+// Basic 8x16 bitmap font data (subset shown for brevity)
+// Each character is 16 bytes (1 byte per row, 8 bits per row)
+static const uint8_t font_bitmap[FONT_CHAR_COUNT][FONT_HEIGHT] = {
+    // Space (32)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    
+    // ! (33)
+    {0x18, 0x3C, 0x3C, 0x3C, 0x18, 0x18, 0x18, 0x00,
+     0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    
+    // " (34)
+    {0x36, 0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    
+    // # (35)
+    {0x36, 0x36, 0x7F, 0x36, 0x7F, 0x36, 0x36, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    
+    // ... Additional characters would be defined here ...
+    // For demo purposes, filling with basic patterns
+};
+
+// Font style flags
+#define FONT_STYLE_NORMAL    0x00
+#define FONT_STYLE_BOLD      0x01
+#define FONT_STYLE_UNDERLINE 0x02
+
+// Text alignment
+typedef enum {
+    TEXT_ALIGN_LEFT = 0,
+    TEXT_ALIGN_CENTER,
+    TEXT_ALIGN_RIGHT
+} text_align_t;
+
+// Glyph cache for faster rendering
+typedef struct {
+    uint8_t character;
+    uint8_t style;
+    uint32_t fg_color;
+    uint32_t bg_color;
+    uint32_t bitmap[FONT_HEIGHT]; // Pre-rendered glyph
+} glyph_cache_entry_t;
+
+#define GLYPH_CACHE_SIZE 256
+static glyph_cache_entry_t glyph_cache[GLYPH_CACHE_SIZE];
+static uint16_t glyph_cache_index = 0;
+
+// Initialize font renderer
+// O(1) time
+void font_init(void) {
+    // Clear glyph cache
+    for (uint16_t i = 0; i < GLYPH_CACHE_SIZE; i++) {
+        glyph_cache[i].character = 0;
+    }
+    glyph_cache_index = 0;
+}
+
+// Render single character to buffer
+// O(FONT_WIDTH * FONT_HEIGHT) = O(1) time
+void font_render_char(uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height,
+                      uint16_t x, uint16_t y, char ch, 
+                      uint32_t fg_color, uint32_t bg_color, uint8_t style) {
+    // Validate character
+    if (ch < FONT_FIRST_CHAR || ch > FONT_LAST_CHAR) {
+        ch = '?'; // Replace invalid chars with ?
+    }
+    
+    uint8_t char_index = ch - FONT_FIRST_CHAR;
+    
+    // Render character bitmap
+    for (uint16_t row = 0; row < FONT_HEIGHT; row++) {
+        if (y + row >= buffer_height) break;
+        
+        uint8_t bitmap_row = font_bitmap[char_index][row];
+        
+        // Apply bold style by shifting and OR-ing
+        if (style & FONT_STYLE_BOLD) {
+            bitmap_row |= (bitmap_row >> 1);
+        }
+        
+        for (uint16_t col = 0; col < FONT_WIDTH; col++) {
+            if (x + col >= buffer_width) break;
+            
+            uint32_t pixel_offset = (y + row) * buffer_width + (x + col);
+            
+            if (bitmap_row & (0x80 >> col)) {
+                buffer[pixel_offset] = fg_color;
+            } else if (bg_color != 0) { // 0 = transparent background
+                buffer[pixel_offset] = bg_color;
+            }
+        }
+    }
+    
+    // Draw underline if requested
+    if (style & FONT_STYLE_UNDERLINE) {
+        uint16_t underline_y = y + FONT_HEIGHT - 2;
+        if (underline_y < buffer_height) {
+            for (uint16_t col = 0; col < FONT_WIDTH; col++) {
+                if (x + col >= buffer_width) break;
+                buffer[underline_y * buffer_width + (x + col)] = fg_color;
+            }
+        }
+    }
+}
+
+// Render string to buffer
+// O(strlen * FONT_WIDTH * FONT_HEIGHT) time
+void font_render_string(uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height,
+                        uint16_t x, uint16_t y, const char* text,
+                        uint32_t fg_color, uint32_t bg_color, uint8_t style) {
+    if (!text || !buffer) return;
+    
+    uint16_t current_x = x;
+    uint16_t current_y = y;
+    
+    // Process each character
+    for (uint16_t i = 0; i < MAX_TEXT_LENGTH && text[i] != '\0'; i++) {
+        char ch = text[i];
+        
+        // Handle special characters
+        if (ch == '\n') {
+            current_x = x;
+            current_y += FONT_HEIGHT;
+            continue;
+        } else if (ch == '\t') {
+            current_x += FONT_WIDTH * 4; // 4 spaces for tab
+            continue;
+        }
+        
+        // Check if character fits on screen
+        if (current_x + FONT_WIDTH > buffer_width) {
+            current_x = x;
+            current_y += FONT_HEIGHT;
+        }
+        
+        if (current_y + FONT_HEIGHT > buffer_height) {
+            break; // No more room
+        }
+        
+        // Render character
+        font_render_char(buffer, buffer_width, buffer_height,
+                         current_x, current_y, ch, fg_color, bg_color, style);
+        
+        current_x += FONT_WIDTH;
+    }
+}
+
+// Render string with alignment
+// O(strlen * FONT_WIDTH * FONT_HEIGHT) time
+void font_render_string_aligned(uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height,
+                                uint16_t x, uint16_t y, uint16_t max_width,
+                                const char* text, text_align_t align,
+                                uint32_t fg_color, uint32_t bg_color, uint8_t style) {
+    if (!text || !buffer) return;
+    
+    // Calculate text width
+    uint16_t text_width = 0;
+    for (uint16_t i = 0; i < MAX_TEXT_LENGTH && text[i] != '\0'; i++) {
+        if (text[i] == '\n') break; // Only align first line
+        text_width += FONT_WIDTH;
+    }
+    
+    // Adjust x position based on alignment
+    uint16_t render_x = x;
+    switch (align) {
+        case TEXT_ALIGN_CENTER:
+            if (text_width < max_width) {
+                render_x = x + (max_width - text_width) / 2;
+            }
+            break;
+            
+        case TEXT_ALIGN_RIGHT:
+            if (text_width < max_width) {
+                render_x = x + (max_width - text_width);
+            }
+            break;
+            
+        case TEXT_ALIGN_LEFT:
+        default:
+            // No adjustment needed
+            break;
+    }
+    
+    font_render_string(buffer, buffer_width, buffer_height,
+                       render_x, y, text, fg_color, bg_color, style);
+}
+
+// Measure text dimensions
+// O(strlen) time
+void font_measure_string(const char* text, uint16_t* width, uint16_t* height) {
+    if (!text || !width || !height) return;
+    
+    *width = 0;
+    *height = FONT_HEIGHT;
+    
+    uint16_t current_width = 0;
+    uint16_t max_width = 0;
+    uint16_t line_count = 1;
+    
+    for (uint16_t i = 0; i < MAX_TEXT_LENGTH && text[i] != '\0'; i++) {
+        if (text[i] == '\n') {
+            if (current_width > max_width) {
+                max_width = current_width;
+            }
+            current_width = 0;
+            line_count++;
+        } else if (text[i] == '\t') {
+            current_width += FONT_WIDTH * 4;
+        } else {
+            current_width += FONT_WIDTH;
+        }
+    }
+    
+    if (current_width > max_width) {
+        max_width = current_width;
+    }
+    
+    *width = max_width;
+    *height = line_count * FONT_HEIGHT;
+}
+
+// Draw text with word wrapping
+// O(strlen * FONT_WIDTH * FONT_HEIGHT) time
+void font_render_wrapped(uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height,
+                         uint16_t x, uint16_t y, uint16_t max_width,
+                         const char* text, uint32_t fg_color, uint32_t bg_color, uint8_t style) {
+    if (!text || !buffer) return;
+    
+    uint16_t current_x = x;
+    uint16_t current_y = y;
+    uint16_t word_start = 0;
+    uint16_t i = 0;
+    
+    while (i < MAX_TEXT_LENGTH && text[i] != '\0') {
+        // Find end of current word
+        uint16_t word_end = i;
+        while (word_end < MAX_TEXT_LENGTH && 
+               text[word_end] != '\0' && 
+               text[word_end] != ' ' && 
+               text[word_end] != '\n') {
+            word_end++;
+        }
+        
+        // Calculate word width
+        uint16_t word_width = (word_end - i) * FONT_WIDTH;
+        
+        // Check if word fits on current line
+        if (current_x != x && current_x + word_width > x + max_width) {
+            // Move to next line
+            current_x = x;
+            current_y += FONT_HEIGHT;
+        }
+        
+        // Render word
+        while (i < word_end) {
+            if (current_y + FONT_HEIGHT > buffer_height) {
+                return; // No more room
+            }
+            
+            font_render_char(buffer, buffer_width, buffer_height,
+                             current_x, current_y, text[i], 
+                             fg_color, bg_color, style);
+            current_x += FONT_WIDTH;
+            i++;
+        }
+        
+        // Handle space or newline
+        if (i < MAX_TEXT_LENGTH && text[i] != '\0') {
+            if (text[i] == '\n') {
+                current_x = x;
+                current_y += FONT_HEIGHT;
+            } else if (text[i] == ' ') {
+                if (current_x + FONT_WIDTH <= x + max_width) {
+                    font_render_char(buffer, buffer_width, buffer_height,
+                                     current_x, current_y, ' ', 
+                                     fg_color, bg_color, style);
+                    current_x += FONT_WIDTH;
+                }
+            }
+            i++;
+        }
+    }
+}

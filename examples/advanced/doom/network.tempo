@@ -1,0 +1,751 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// DOOM Network Code - Deterministic netplay implementation
+
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+const NET_PROTOCOL_VERSION: u32 = 1;
+const MAX_PLAYERS: usize = 4;
+const TIC_BUFFER_SIZE: usize = 128;
+const BACKUP_TICS: usize = 12;
+
+struct NetworkManager {
+    // Network state
+    is_server: bool,
+    local_player: usize,
+    num_players: usize,
+    player_addrs: [SocketAddr; MAX_PLAYERS],
+    
+    // Game synchronization
+    local_tic: u32,
+    remote_tics: [u32; MAX_PLAYERS],
+    tic_commands: [[TicCommand; TIC_BUFFER_SIZE]; MAX_PLAYERS],
+    
+    // Connection management
+    socket: Option<UdpSocket>,
+    connection_state: [ConnectionState; MAX_PLAYERS],
+    last_packet_time: [u64; MAX_PLAYERS],
+    
+    // Consistency checking
+    consistency_data: [ConsistencyData; TIC_BUFFER_SIZE],
+    last_consistency_tic: u32,
+    
+    // Network stats
+    packet_loss: [f32; MAX_PLAYERS],
+    ping: [u32; MAX_PLAYERS],
+    
+    // Buffering
+    send_buffer: Vec<u8>,
+    recv_buffer: Vec<u8>,
+}
+
+#[derive(Copy, Clone)]
+struct TicCommand {
+    tic: u32,
+    forward_move: i8,
+    side_move: i8,
+    angle_turn: i16,
+    buttons: u8,
+    consistency: u32,
+}
+
+#[derive(Copy, Clone)]
+struct ConsistencyData {
+    tic: u32,
+    player_positions: [(i32, i32); MAX_PLAYERS],
+    rng_index: u32,
+    checksum: u32,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Syncing,
+    Playing,
+}
+
+enum PacketType {
+    Connect = 0,
+    Accept = 1,
+    Reject = 2,
+    TicData = 3,
+    ResyncRequest = 4,
+    ResyncData = 5,
+    Ping = 6,
+    Pong = 7,
+    Disconnect = 8,
+}
+
+struct PacketHeader {
+    packet_type: u8,
+    protocol_version: u32,
+    sequence: u32,
+    ack_sequence: u32,
+}
+
+impl NetworkManager {
+    fn new() -> NetworkManager {
+        NetworkManager {
+            is_server: false,
+            local_player: 0,
+            num_players: 1,
+            player_addrs: [SocketAddr::default(); MAX_PLAYERS],
+            local_tic: 0,
+            remote_tics: [0; MAX_PLAYERS],
+            tic_commands: [[TicCommand::default(); TIC_BUFFER_SIZE]; MAX_PLAYERS],
+            socket: None,
+            connection_state: [ConnectionState::Disconnected; MAX_PLAYERS],
+            last_packet_time: [0; MAX_PLAYERS],
+            consistency_data: [ConsistencyData::default(); TIC_BUFFER_SIZE],
+            last_consistency_tic: 0,
+            packet_loss: [0.0; MAX_PLAYERS],
+            ping: [0; MAX_PLAYERS],
+            send_buffer: Vec::with_capacity(1024),
+            recv_buffer: vec![0u8; 1024],
+        }
+    }
+    
+    fn init(&mut self, port: u16) -> Result<(), String> {
+        // Create UDP socket
+        let addr = format!("0.0.0.0:{}", port);
+        self.socket = Some(
+            UdpSocket::bind(&addr)
+                .map_err(|e| format!("Failed to bind socket: {}", e))?
+        );
+        
+        // Set non-blocking
+        if let Some(ref socket) = self.socket {
+            socket.set_nonblocking(true)
+                .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
+        }
+        
+        Ok(())
+    }
+    
+    fn host_game(&mut self, max_players: usize) -> Result<(), String> {
+        if self.socket.is_none() {
+            return Err("Network not initialized".to_string());
+        }
+        
+        self.is_server = true;
+        self.local_player = 0;
+        self.num_players = 1;
+        self.connection_state[0] = ConnectionState::Playing;
+        
+        println!("Hosting game on port {}", self.get_port());
+        
+        Ok(())
+    }
+    
+    fn join_game(&mut self, server_addr: &str) -> Result<(), String> {
+        if self.socket.is_none() {
+            return Err("Network not initialized".to_string());
+        }
+        
+        let addr: SocketAddr = server_addr.parse()
+            .map_err(|e| format!("Invalid server address: {}", e))?;
+        
+        self.is_server = false;
+        self.player_addrs[0] = addr;
+        self.connection_state[0] = ConnectionState::Connecting;
+        
+        // Send connect packet
+        self.send_connect_packet(0)?;
+        
+        Ok(())
+    }
+    
+    fn sync_tic(&mut self, tic: u32, input: &InputState) -> Result<(), String> {
+        self.local_tic = tic;
+        
+        // Store local command
+        let cmd = TicCommand {
+            tic,
+            forward_move: input.forward_move,
+            side_move: input.side_move,
+            angle_turn: input.angle_turn,
+            buttons: input.buttons,
+            consistency: self.calculate_consistency(tic),
+        };
+        
+        let buffer_idx = (tic % TIC_BUFFER_SIZE as u32) as usize;
+        self.tic_commands[self.local_player][buffer_idx] = cmd;
+        
+        // Process incoming packets
+        self.process_packets()?;
+        
+        // Send tic data to all players
+        self.send_tic_data(tic)?;
+        
+        // Check if we need to wait for other players
+        if !self.all_players_ready(tic) {
+            // In a real implementation, we would block here
+            // For now, we'll just proceed
+        }
+        
+        // Check consistency every N tics
+        if tic % 10 == 0 {
+            self.check_consistency(tic)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn process_packets(&mut self) -> Result<(), String> {
+        if let Some(ref socket) = self.socket {
+            loop {
+                match socket.recv_from(&mut self.recv_buffer) {
+                    Ok((len, addr)) => {
+                        self.handle_packet(&self.recv_buffer[..len], addr)?;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(format!("Network error: {}", e));
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn handle_packet(&mut self, data: &[u8], addr: SocketAddr) -> Result<(), String> {
+        if data.len() < std::mem::size_of::<PacketHeader>() {
+            return Ok(()); // Ignore malformed packets
+        }
+        
+        let header = unsafe {
+            &*(data.as_ptr() as *const PacketHeader)
+        };
+        
+        if header.protocol_version != NET_PROTOCOL_VERSION {
+            return Ok(()); // Wrong version
+        }
+        
+        let player_id = self.get_player_by_addr(addr);
+        
+        match header.packet_type {
+            0 => self.handle_connect(data, addr)?,
+            1 => self.handle_accept(data, addr)?,
+            2 => self.handle_reject(data, addr)?,
+            3 => self.handle_tic_data(data, player_id)?,
+            4 => self.handle_resync_request(data, player_id)?,
+            5 => self.handle_resync_data(data, player_id)?,
+            6 => self.handle_ping(data, player_id)?,
+            7 => self.handle_pong(data, player_id)?,
+            8 => self.handle_disconnect(data, player_id)?,
+            _ => {} // Unknown packet type
+        }
+        
+        if let Some(player) = player_id {
+            self.last_packet_time[player] = get_time_ms();
+        }
+        
+        Ok(())
+    }
+    
+    fn handle_connect(&mut self, data: &[u8], addr: SocketAddr) -> Result<(), String> {
+        if !self.is_server {
+            return Ok(());
+        }
+        
+        // Find empty slot
+        let slot = self.find_empty_slot();
+        if let Some(player_id) = slot {
+            self.player_addrs[player_id] = addr;
+            self.connection_state[player_id] = ConnectionState::Connected;
+            self.num_players += 1;
+            
+            // Send accept
+            self.send_accept_packet(player_id)?;
+            
+            // Notify other players
+            self.broadcast_player_joined(player_id)?;
+        } else {
+            // Server full, send reject
+            self.send_reject_packet(addr)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn handle_accept(&mut self, data: &[u8], addr: SocketAddr) -> Result<(), String> {
+        if self.is_server {
+            return Ok(());
+        }
+        
+        if data.len() < std::mem::size_of::<PacketHeader>() + 4 {
+            return Ok(());
+        }
+        
+        let player_id = data[std::mem::size_of::<PacketHeader>()];
+        self.local_player = player_id as usize;
+        self.connection_state[0] = ConnectionState::Syncing;
+        
+        // Request sync
+        self.send_resync_request(0)?;
+        
+        Ok(())
+    }
+    
+    fn handle_tic_data(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        if player_id.is_none() {
+            return Ok(());
+        }
+        
+        let player = player_id.unwrap();
+        let header_size = std::mem::size_of::<PacketHeader>();
+        
+        if data.len() < header_size + std::mem::size_of::<TicCommand>() {
+            return Ok(());
+        }
+        
+        // Parse tic commands
+        let mut offset = header_size;
+        while offset + std::mem::size_of::<TicCommand>() <= data.len() {
+            let cmd = unsafe {
+                &*(data[offset..].as_ptr() as *const TicCommand)
+            };
+            
+            let buffer_idx = (cmd.tic % TIC_BUFFER_SIZE as u32) as usize;
+            self.tic_commands[player][buffer_idx] = *cmd;
+            
+            if cmd.tic > self.remote_tics[player] {
+                self.remote_tics[player] = cmd.tic;
+            }
+            
+            offset += std::mem::size_of::<TicCommand>();
+        }
+        
+        Ok(())
+    }
+    
+    fn send_tic_data(&mut self, tic: u32) -> Result<(), String> {
+        self.send_buffer.clear();
+        
+        // Build header
+        let header = PacketHeader {
+            packet_type: PacketType::TicData as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: tic,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        // Add recent tics for redundancy
+        let start_tic = tic.saturating_sub(BACKUP_TICS as u32);
+        for t in start_tic..=tic {
+            let buffer_idx = (t % TIC_BUFFER_SIZE as u32) as usize;
+            let cmd = &self.tic_commands[self.local_player][buffer_idx];
+            
+            self.send_buffer.extend_from_slice(unsafe {
+                std::slice::from_raw_parts(
+                    cmd as *const _ as *const u8,
+                    std::mem::size_of::<TicCommand>()
+                )
+            });
+        }
+        
+        // Send to all connected players
+        for i in 0..MAX_PLAYERS {
+            if i != self.local_player && self.connection_state[i] == ConnectionState::Playing {
+                self.send_to_player(i, &self.send_buffer)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn send_connect_packet(&mut self, player_id: usize) -> Result<(), String> {
+        let header = PacketHeader {
+            packet_type: PacketType::Connect as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: 0,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.clear();
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        self.send_to_player(player_id, &self.send_buffer)
+    }
+    
+    fn send_accept_packet(&mut self, player_id: usize) -> Result<(), String> {
+        let header = PacketHeader {
+            packet_type: PacketType::Accept as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: 0,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.clear();
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        // Add player ID
+        self.send_buffer.push(player_id as u8);
+        
+        // Add game state info
+        self.send_buffer.extend_from_slice(&self.local_tic.to_le_bytes());
+        
+        self.send_to_player(player_id, &self.send_buffer)
+    }
+    
+    fn send_reject_packet(&mut self, addr: SocketAddr) -> Result<(), String> {
+        let header = PacketHeader {
+            packet_type: PacketType::Reject as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: 0,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.clear();
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        if let Some(ref socket) = self.socket {
+            socket.send_to(&self.send_buffer, addr)
+                .map_err(|e| format!("Send failed: {}", e))?;
+        }
+        
+        Ok(())
+    }
+    
+    fn send_resync_request(&mut self, player_id: usize) -> Result<(), String> {
+        let header = PacketHeader {
+            packet_type: PacketType::ResyncRequest as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: self.local_tic,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.clear();
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        self.send_to_player(player_id, &self.send_buffer)
+    }
+    
+    fn handle_resync_request(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        if let Some(player) = player_id {
+            // Send full game state
+            self.send_resync_data(player)?;
+        }
+        Ok(())
+    }
+    
+    fn send_resync_data(&mut self, player_id: usize) -> Result<(), String> {
+        // In a real implementation, this would send the full game state
+        // For now, just mark the player as synced
+        self.connection_state[player_id] = ConnectionState::Playing;
+        Ok(())
+    }
+    
+    fn handle_resync_data(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        // Apply received game state
+        self.connection_state[self.local_player] = ConnectionState::Playing;
+        Ok(())
+    }
+    
+    fn handle_ping(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        if let Some(player) = player_id {
+            // Send pong
+            let header = PacketHeader {
+                packet_type: PacketType::Pong as u8,
+                protocol_version: NET_PROTOCOL_VERSION,
+                sequence: 0,
+                ack_sequence: 0,
+            };
+            
+            self.send_buffer.clear();
+            self.send_buffer.extend_from_slice(unsafe {
+                std::slice::from_raw_parts(
+                    &header as *const _ as *const u8,
+                    std::mem::size_of::<PacketHeader>()
+                )
+            });
+            
+            // Echo timestamp
+            if data.len() >= std::mem::size_of::<PacketHeader>() + 8 {
+                let timestamp_offset = std::mem::size_of::<PacketHeader>();
+                self.send_buffer.extend_from_slice(&data[timestamp_offset..timestamp_offset + 8]);
+            }
+            
+            self.send_to_player(player, &self.send_buffer)?;
+        }
+        Ok(())
+    }
+    
+    fn handle_pong(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        if let Some(player) = player_id {
+            // Calculate ping
+            if data.len() >= std::mem::size_of::<PacketHeader>() + 8 {
+                let timestamp_offset = std::mem::size_of::<PacketHeader>();
+                let sent_time = u64::from_le_bytes([
+                    data[timestamp_offset],
+                    data[timestamp_offset + 1],
+                    data[timestamp_offset + 2],
+                    data[timestamp_offset + 3],
+                    data[timestamp_offset + 4],
+                    data[timestamp_offset + 5],
+                    data[timestamp_offset + 6],
+                    data[timestamp_offset + 7],
+                ]);
+                
+                let current_time = get_time_ms();
+                self.ping[player] = (current_time - sent_time) as u32;
+            }
+        }
+        Ok(())
+    }
+    
+    fn handle_disconnect(&mut self, data: &[u8], player_id: Option<usize>) -> Result<(), String> {
+        if let Some(player) = player_id {
+            self.disconnect_player(player);
+        }
+        Ok(())
+    }
+    
+    fn send_to_player(&mut self, player_id: usize, data: &[u8]) -> Result<(), String> {
+        if let Some(ref socket) = self.socket {
+            let addr = self.player_addrs[player_id];
+            socket.send_to(data, addr)
+                .map_err(|e| format!("Send failed: {}", e))?;
+        }
+        Ok(())
+    }
+    
+    fn broadcast_player_joined(&mut self, new_player: usize) -> Result<(), String> {
+        // Notify all players about new player
+        // Implementation would send player info to all connected players
+        Ok(())
+    }
+    
+    fn find_empty_slot(&self) -> Option<usize> {
+        for i in 1..MAX_PLAYERS {
+            if self.connection_state[i] == ConnectionState::Disconnected {
+                return Some(i);
+            }
+        }
+        None
+    }
+    
+    fn get_player_by_addr(&self, addr: SocketAddr) -> Option<usize> {
+        for i in 0..MAX_PLAYERS {
+            if self.player_addrs[i] == addr {
+                return Some(i);
+            }
+        }
+        None
+    }
+    
+    fn all_players_ready(&self, tic: u32) -> bool {
+        for i in 0..self.num_players {
+            if self.connection_state[i] == ConnectionState::Playing {
+                if self.remote_tics[i] < tic && i != self.local_player {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    
+    fn calculate_consistency(&self, tic: u32) -> u32 {
+        // Calculate checksum of important game state
+        // This ensures all players are in sync
+        let mut checksum = tic;
+        
+        // In real implementation, would include:
+        // - Player positions
+        // - Monster positions
+        // - RNG state
+        // - Item states
+        
+        checksum
+    }
+    
+    fn check_consistency(&mut self, tic: u32) -> Result<(), String> {
+        let buffer_idx = (tic % TIC_BUFFER_SIZE as u32) as usize;
+        
+        // Compare consistency values from all players
+        let mut base_consistency = 0;
+        let mut has_base = false;
+        
+        for i in 0..self.num_players {
+            if self.connection_state[i] == ConnectionState::Playing {
+                let cmd = &self.tic_commands[i][buffer_idx];
+                if cmd.tic == tic {
+                    if !has_base {
+                        base_consistency = cmd.consistency;
+                        has_base = true;
+                    } else if cmd.consistency != base_consistency {
+                        // Desync detected!
+                        return Err(format!("Desync detected at tic {} between players", tic));
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn disconnect_player(&mut self, player_id: usize) {
+        self.connection_state[player_id] = ConnectionState::Disconnected;
+        if player_id < self.num_players - 1 {
+            // Compact player array
+            // In real implementation
+        }
+        self.num_players -= 1;
+    }
+    
+    fn get_port(&self) -> u16 {
+        if let Some(ref socket) = self.socket {
+            if let Ok(addr) = socket.local_addr() {
+                return addr.port();
+            }
+        }
+        0
+    }
+    
+    fn is_connected(&self) -> bool {
+        self.num_players > 1
+    }
+    
+    fn get_tic_command(&self, player_id: usize, tic: u32) -> Option<&TicCommand> {
+        let buffer_idx = (tic % TIC_BUFFER_SIZE as u32) as usize;
+        let cmd = &self.tic_commands[player_id][buffer_idx];
+        
+        if cmd.tic == tic {
+            Some(cmd)
+        } else {
+            None
+        }
+    }
+    
+    fn update_stats(&mut self) {
+        let current_time = get_time_ms();
+        
+        // Check for timeouts
+        for i in 0..MAX_PLAYERS {
+            if self.connection_state[i] == ConnectionState::Playing {
+                if current_time - self.last_packet_time[i] > 5000 {
+                    // 5 second timeout
+                    self.disconnect_player(i);
+                }
+            }
+        }
+        
+        // Send periodic pings
+        static mut last_ping_time: u64 = 0;
+        unsafe {
+            if current_time - last_ping_time > 1000 {
+                last_ping_time = current_time;
+                for i in 0..MAX_PLAYERS {
+                    if i != self.local_player && self.connection_state[i] == ConnectionState::Playing {
+                        self.send_ping(i).ok();
+                    }
+                }
+            }
+        }
+    }
+    
+    fn send_ping(&mut self, player_id: usize) -> Result<(), String> {
+        let header = PacketHeader {
+            packet_type: PacketType::Ping as u8,
+            protocol_version: NET_PROTOCOL_VERSION,
+            sequence: 0,
+            ack_sequence: 0,
+        };
+        
+        self.send_buffer.clear();
+        self.send_buffer.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                &header as *const _ as *const u8,
+                std::mem::size_of::<PacketHeader>()
+            )
+        });
+        
+        // Add timestamp
+        let timestamp = get_time_ms();
+        self.send_buffer.extend_from_slice(&timestamp.to_le_bytes());
+        
+        self.send_to_player(player_id, &self.send_buffer)
+    }
+}
+
+// Default implementations
+impl Default for TicCommand {
+    fn default() -> Self {
+        TicCommand {
+            tic: 0,
+            forward_move: 0,
+            side_move: 0,
+            angle_turn: 0,
+            buttons: 0,
+            consistency: 0,
+        }
+    }
+}
+
+impl Default for ConsistencyData {
+    fn default() -> Self {
+        ConsistencyData {
+            tic: 0,
+            player_positions: [(0, 0); MAX_PLAYERS],
+            rng_index: 0,
+            checksum: 0,
+        }
+    }
+}
+
+impl Default for SocketAddr {
+    fn default() -> Self {
+        SocketAddr::V4(std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::new(0, 0, 0, 0),
+            0
+        ))
+    }
+}
+
+// Platform-specific network functions
+use std::net::{UdpSocket, SocketAddr};
+use std::io;
+
+extern fn get_time_ms() -> u64;

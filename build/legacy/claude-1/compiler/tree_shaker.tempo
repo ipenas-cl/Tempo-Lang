@@ -1,0 +1,254 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Tree Shaker - Dead Code Elimination for Tempo Compiler
+// This module analyzes which functions from the prelude are actually used
+// and generates optimized output containing only necessary code
+
+struct TreeShaker {
+    // Set of all function names defined in prelude
+    available_functions: HashSet<string>
+    
+    // Set of functions actually used by the program
+    used_functions: HashSet<string>
+    
+    // Dependency graph: function -> functions it calls
+    dependencies: HashMap<string, Vec<string>>
+    
+    // AST of the user's program
+    program_ast: AST
+    
+    // Stats for reporting
+    total_prelude_size: u64
+    final_size: u64
+}
+
+impl TreeShaker {
+    func new(program_ast: AST) -> TreeShaker {
+        let mut shaker = TreeShaker{
+            available_functions: HashSet::new(),
+            used_functions: HashSet::new(),
+            dependencies: HashMap::new(),
+            program_ast: program_ast,
+            total_prelude_size: 0,
+            final_size: 0,
+        }
+        
+        // Initialize with all prelude functions
+        shaker.load_prelude_functions()
+        shaker
+    }
+    
+    func load_prelude_functions() {
+        // These would be loaded from the prelude.tempo file
+        self.available_functions.insert("println")
+        self.available_functions.insert("print")
+        self.available_functions.insert("format")
+        self.available_functions.insert("listen_tcp")
+        self.available_functions.insert("dial_tcp")
+        self.available_functions.insert("now")
+        self.available_functions.insert("sleep")
+        self.available_functions.insert("hash_fnv1a_string")
+        self.available_functions.insert("string_from_bytes")
+        self.available_functions.insert("string_to_bytes")
+        self.available_functions.insert("parse_i64")
+        self.available_functions.insert("parse_u64")
+        // ... hundreds more
+        
+        // Build dependency graph
+        self.dependencies.insert("println", vec!["format", "write_stdout"])
+        self.dependencies.insert("format", vec!["string_builder_new", "string_builder_append"])
+        self.dependencies.insert("listen_tcp", vec!["socket", "bind", "listen", "parse_addr"])
+        // ... etc
+    }
+    
+    func analyze() -> TreeShakeResult {
+        // Step 1: Find all functions directly called in user code
+        self.find_direct_calls(&self.program_ast)
+        
+        // Step 2: Recursively find all transitive dependencies
+        let mut to_process: Vec<string> = self.used_functions.iter().cloned().collect()
+        let mut processed: HashSet<string> = HashSet::new()
+        
+        while let Some(func) = to_process.pop() {
+            if processed.contains(&func) {
+                continue
+            }
+            processed.insert(func.clone())
+            
+            // Add all dependencies of this function
+            if let Some(deps) = self.dependencies.get(&func) {
+                for dep in deps {
+                    if !self.used_functions.contains(dep) {
+                        self.used_functions.insert(dep.clone())
+                        to_process.push(dep.clone())
+                    }
+                }
+            }
+        }
+        
+        // Step 3: Calculate size savings
+        let used_count = self.used_functions.len()
+        let total_count = self.available_functions.len()
+        let percentage_used = (used_count as f64 / total_count as f64) * 100.0
+        
+        TreeShakeResult{
+            used_functions: self.used_functions.clone(),
+            unused_functions: self.available_functions.difference(&self.used_functions).cloned().collect(),
+            stats: TreeShakeStats{
+                total_functions: total_count,
+                used_functions: used_count,
+                removed_functions: total_count - used_count,
+                percentage_used: percentage_used,
+                estimated_size_reduction: (100.0 - percentage_used) as u32,
+            }
+        }
+    }
+    
+    func find_direct_calls(&mut self, node: &ASTNode) {
+        match node {
+            ASTNode::Call(name, args) => {
+                // Record this function as used
+                if self.available_functions.contains(name) {
+                    self.used_functions.insert(name.clone())
+                }
+                // Recursively check arguments
+                for arg in args {
+                    self.find_direct_calls(arg)
+                }
+            }
+            ASTNode::Block(statements) => {
+                for stmt in statements {
+                    self.find_direct_calls(stmt)
+                }
+            }
+            ASTNode::If(cond, then_block, else_block) => {
+                self.find_direct_calls(cond)
+                self.find_direct_calls(then_block)
+                if let Some(else_b) = else_block {
+                    self.find_direct_calls(else_b)
+                }
+            }
+            ASTNode::Function(_, _, body) => {
+                self.find_direct_calls(body)
+            }
+            // ... handle other node types
+            _ => {}
+        }
+    }
+    
+    func generate_report(&self, result: &TreeShakeResult) -> string {
+        let mut report = StringBuilder::new()
+        
+        report.append("=== Tempo Tree-Shaking Report ===\n\n")
+        
+        report.append(format!("Total prelude functions: {}\n", result.stats.total_functions))
+        report.append(format!("Functions used: {} ({:.1}%)\n", 
+            result.stats.used_functions, 
+            result.stats.percentage_used))
+        report.append(format!("Functions removed: {} ({:.1}%)\n", 
+            result.stats.removed_functions,
+            100.0 - result.stats.percentage_used))
+        report.append(format!("Estimated size reduction: {}%\n\n", 
+            result.stats.estimated_size_reduction))
+        
+        report.append("Used functions:\n")
+        let mut used_list: Vec<string> = result.used_functions.iter().cloned().collect()
+        used_list.sort()
+        for func in used_list {
+            report.append(format!("  ✓ {}\n", func))
+        }
+        
+        report.append("\nSample of removed functions:\n")
+        let mut unused_list: Vec<string> = result.unused_functions.iter().take(10).cloned().collect()
+        unused_list.sort()
+        for func in unused_list {
+            report.append(format!("  ✗ {}\n", func))
+        }
+        if result.unused_functions.len() > 10 {
+            report.append(format!("  ... and {} more\n", result.unused_functions.len() - 10))
+        }
+        
+        report.to_string()
+    }
+}
+
+struct TreeShakeResult {
+    used_functions: HashSet<string>
+    unused_functions: HashSet<string>
+    stats: TreeShakeStats
+}
+
+struct TreeShakeStats {
+    total_functions: u64
+    used_functions: u64
+    removed_functions: u64
+    percentage_used: f64
+    estimated_size_reduction: u32
+}
+
+// Example: Analyzing a simple "Hello World" program
+func demo_tree_shaking() {
+    println("=== Tree Shaking Demo ===\n")
+    
+    // Simulate different programs
+    let examples = [
+        ("Hello World", ["println"]),
+        ("TCP Server", ["println", "listen_tcp", "accept"]),
+        ("Redis Killer", ["println", "listen_tcp", "accept", "hash_fnv1a_string", "now", "parse_i64"]),
+    ]
+    
+    for (name, used_funcs) in examples {
+        println(format!("\nAnalyzing '{}' program:", name))
+        println("Functions directly used:", used_funcs.len())
+        
+        // Simulate tree shaking
+        let mut total_with_deps = used_funcs.len()
+        
+        // Add estimated dependencies
+        if used_funcs.contains(&"println") {
+            total_with_deps += 3  // format, write_stdout, etc
+        }
+        if used_funcs.contains(&"listen_tcp") {
+            total_with_deps += 5  // socket, bind, listen, etc
+        }
+        
+        let percentage = (total_with_deps as f64 / 200.0) * 100.0  // Assume 200 total functions
+        println(format!("Total with dependencies: {} ({:.1}% of prelude)", total_with_deps, percentage))
+        println(format!("Size reduction: {:.1}%", 100.0 - percentage))
+    }
+}
+
+// Integration with the compiler
+func integrate_tree_shaking(ast: AST, output_path: string) {
+    let shaker = TreeShaker::new(ast)
+    let result = shaker.analyze()
+    
+    // Generate optimized code
+    let mut codegen = CodeGenerator::new()
+    
+    // Only include used functions from prelude
+    for func_name in &result.used_functions {
+        if let Some(func_impl) = get_prelude_function(func_name) {
+            codegen.add_function(func_impl)
+        }
+    }
+    
+    // Add user code
+    codegen.add_ast(ast)
+    
+    // Generate final binary
+    let binary = codegen.generate()
+    write_file(output_path, binary)
+    
+    // Print report
+    println(shaker.generate_report(&result))
+}

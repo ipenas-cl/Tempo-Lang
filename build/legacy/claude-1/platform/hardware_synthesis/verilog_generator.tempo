@@ -1,0 +1,524 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Verilog/VHDL Code Generator for Tempo Hardware Synthesis
+// Generates synthesizable HDL from Tempo hardware modules
+
+module hardware_synthesis.verilog_generator {
+    use hardware_synthesis.synthesizer
+    use core.types
+    
+    // HDL generation configuration
+    struct HDLConfig {
+        language: HDLLanguage
+        style: CodingStyle
+        clock_name: string
+        reset_name: string
+        reset_polarity: ResetPolarity
+        data_width: u32
+        vendor_primitives: bool
+    }
+    
+    enum HDLLanguage {
+        Verilog2001
+        SystemVerilog
+        VHDL2008
+    }
+    
+    enum CodingStyle {
+        Behavioral
+        RTL
+        Structural
+    }
+    
+    enum ResetPolarity {
+        ActiveHigh
+        ActiveLow
+    }
+    
+    // Generated HDL module
+    struct HDLModule {
+        name: string
+        parameters: [Parameter]
+        ports: [HDLPort]
+        declarations: [Declaration]
+        always_blocks: [AlwaysBlock]
+        assignments: [Assignment]
+        instances: [ModuleInstance]
+        comments: [Comment]
+    }
+    
+    // HDL port definition
+    struct HDLPort {
+        name: string
+        direction: PortDirection
+        width: PortWidth
+        port_type: PortType
+    }
+    
+    enum PortWidth {
+        Single
+        Vector(u32, u32)  // [high:low]
+        Parameterized(string)
+    }
+    
+    // Always block for sequential/combinational logic
+    struct AlwaysBlock {
+        sensitivity: SensitivityList
+        block_type: BlockType
+        statements: [HDLStatement]
+    }
+    
+    enum BlockType {
+        Sequential
+        Combinational
+    }
+    
+    // Main Verilog generation function
+    func generate_verilog(hw_module: synthesizer.HardwareModule, 
+                         config: HDLConfig) -> string {
+        let hdl = convert_to_hdl(hw_module, config)
+        format_hdl_module(hdl, config)
+    }
+    
+    // Convert hardware module to HDL representation
+    func convert_to_hdl(hw_module: synthesizer.HardwareModule, 
+                       config: HDLConfig) -> HDLModule {
+        let hdl_module = HDLModule {
+            name: hw_module.name,
+            parameters: generate_parameters(hw_module),
+            ports: convert_ports(hw_module.inputs, hw_module.outputs, config),
+            declarations: generate_declarations(hw_module),
+            always_blocks: generate_always_blocks(hw_module, config),
+            assignments: generate_assignments(hw_module),
+            instances: generate_instances(hw_module),
+            comments: generate_comments(hw_module)
+        }
+        
+        hdl_module
+    }
+    
+    // Generate module parameters
+    func generate_parameters(hw_module: synthesizer.HardwareModule) -> [Parameter] {
+        let params = []
+        
+        // Add configurable parameters based on module analysis
+        params.push(Parameter {
+            name: "DATA_WIDTH",
+            default_value: "32",
+            description: "Data path width"
+        })
+        
+        if hw_module.datapath.pipeline_stages > 0 {
+            params.push(Parameter {
+                name: "PIPELINE_STAGES",
+                default_value: hw_module.datapath.pipeline_stages.to_string(),
+                description: "Number of pipeline stages"
+            })
+        }
+        
+        params
+    }
+    
+    // Convert ports to HDL format
+    func convert_ports(inputs: [synthesizer.Port], outputs: [synthesizer.Port], 
+                      config: HDLConfig) -> [HDLPort] {
+        let hdl_ports = []
+        
+        // Add clock and reset
+        hdl_ports.push(HDLPort {
+            name: config.clock_name,
+            direction: PortDirection.Input,
+            width: PortWidth.Single,
+            port_type: PortType.Clock
+        })
+        
+        hdl_ports.push(HDLPort {
+            name: config.reset_name,
+            direction: PortDirection.Input,
+            width: PortWidth.Single,
+            port_type: PortType.Reset
+        })
+        
+        // Convert input ports
+        for port in inputs {
+            hdl_ports.push(convert_port(port, PortDirection.Input))
+        }
+        
+        // Convert output ports
+        for port in outputs {
+            hdl_ports.push(convert_port(port, PortDirection.Output))
+        }
+        
+        hdl_ports
+    }
+    
+    // Generate always blocks for FSM and datapath
+    func generate_always_blocks(hw_module: synthesizer.HardwareModule, 
+                              config: HDLConfig) -> [AlwaysBlock] {
+        let blocks = []
+        
+        // Generate FSM state register
+        if hw_module.control_fsm.states.len() > 1 {
+            blocks.push(generate_fsm_state_register(hw_module.control_fsm, config))
+            blocks.push(generate_fsm_next_state_logic(hw_module.control_fsm))
+            blocks.push(generate_fsm_output_logic(hw_module.control_fsm))
+        }
+        
+        // Generate datapath registers
+        for reg in hw_module.state_registers {
+            blocks.push(generate_register_logic(reg, config))
+        }
+        
+        // Generate combinational datapath
+        blocks.push(generate_datapath_logic(hw_module.datapath))
+        
+        blocks
+    }
+    
+    // Generate FSM state register
+    func generate_fsm_state_register(fsm: synthesizer.FiniteStateMachine, 
+                                   config: HDLConfig) -> AlwaysBlock {
+        let sensitivity = SensitivityList.Edge(
+            EdgeType.Positive, 
+            config.clock_name
+        )
+        
+        let statements = []
+        
+        // Reset condition
+        let reset_condition = if config.reset_polarity == ResetPolarity.ActiveHigh {
+            BinaryOp(Identifier(config.reset_name), "==", Literal("1'b1"))
+        } else {
+            BinaryOp(Identifier(config.reset_name), "==", Literal("1'b0"))
+        }
+        
+        statements.push(HDLStatement.If(
+            reset_condition,
+            [HDLStatement.Assignment(
+                "current_state",
+                format_state_value(fsm.initial_state)
+            )],
+            [HDLStatement.Assignment(
+                "current_state",
+                "next_state"
+            )]
+        ))
+        
+        AlwaysBlock {
+            sensitivity: sensitivity,
+            block_type: BlockType.Sequential,
+            statements: statements
+        }
+    }
+    
+    // Generate FSM next state logic
+    func generate_fsm_next_state_logic(fsm: synthesizer.FiniteStateMachine) -> AlwaysBlock {
+        let sensitivity = SensitivityList.All
+        let statements = []
+        
+        // Default assignment
+        statements.push(HDLStatement.Assignment("next_state", "current_state"))
+        
+        // Generate case statement for state transitions
+        let case_items = []
+        for state in fsm.states {
+            let state_transitions = []
+            
+            for transition in fsm.transitions {
+                if transition.from_state == state.id {
+                    state_transitions.push(generate_transition_logic(transition))
+                }
+            }
+            
+            case_items.push(CaseItem {
+                value: format_state_value(state.id),
+                statements: state_transitions
+            })
+        }
+        
+        statements.push(HDLStatement.Case("current_state", case_items))
+        
+        AlwaysBlock {
+            sensitivity: sensitivity,
+            block_type: BlockType.Combinational,
+            statements: statements
+        }
+    }
+    
+    // Generate datapath logic
+    func generate_datapath_logic(datapath: synthesizer.Datapath) -> AlwaysBlock {
+        let sensitivity = SensitivityList.All
+        let statements = []
+        
+        // Generate logic for each operation
+        for op in datapath.operations {
+            match op.op_type {
+                OperationType.Arithmetic(arith_op) => {
+                    statements.extend(generate_arithmetic_logic(op, arith_op))
+                }
+                OperationType.Logic(logic_op) => {
+                    statements.extend(generate_logic_operation(op, logic_op))
+                }
+                OperationType.Comparison(comp_op) => {
+                    statements.extend(generate_comparison_logic(op, comp_op))
+                }
+                OperationType.Multiplexer => {
+                    statements.extend(generate_mux_logic(op))
+                }
+                _ => {}
+            }
+        }
+        
+        AlwaysBlock {
+            sensitivity: sensitivity,
+            block_type: BlockType.Combinational,
+            statements: statements
+        }
+    }
+    
+    // Generate arithmetic operation
+    func generate_arithmetic_logic(op: DatapathOperation, 
+                                 arith_op: ArithmeticOp) -> [HDLStatement] {
+        let statements = []
+        
+        match arith_op {
+            ArithmeticOp.Add => {
+                statements.push(HDLStatement.Assignment(
+                    op.output,
+                    format!("{} + {}", op.inputs[0], op.inputs[1])
+                ))
+            }
+            ArithmeticOp.Multiply => {
+                // For multiplication, might need special handling
+                if op.is_pipelined {
+                    statements.extend(generate_pipelined_multiply(op))
+                } else {
+                    statements.push(HDLStatement.Assignment(
+                        op.output,
+                        format!("{} * {}", op.inputs[0], op.inputs[1])
+                    ))
+                }
+            }
+            ArithmeticOp.Divide => {
+                // Division often requires IP cores
+                statements.extend(generate_divider_instance(op))
+            }
+            _ => {}
+        }
+        
+        statements
+    }
+    
+    // Format complete HDL module
+    func format_hdl_module(hdl: HDLModule, config: HDLConfig) -> string {
+        let mut output = ""
+        
+        // Add header comments
+        output += generate_header_comment(hdl, config)
+        
+        // Module declaration
+        output += format_module_declaration(hdl, config)
+        
+        // Parameters
+        if hdl.parameters.len() > 0 {
+            output += format_parameters(hdl.parameters, config)
+        }
+        
+        // Port declarations
+        output += format_ports(hdl.ports, config)
+        
+        // Internal declarations
+        output += format_declarations(hdl.declarations, config)
+        
+        // Always blocks
+        for block in hdl.always_blocks {
+            output += format_always_block(block, config)
+        }
+        
+        // Continuous assignments
+        for assignment in hdl.assignments {
+            output += format_assignment(assignment, config)
+        }
+        
+        // Module instances
+        for instance in hdl.instances {
+            output += format_instance(instance, config)
+        }
+        
+        // End module
+        output += "\nendmodule\n"
+        
+        output
+    }
+    
+    // Format module declaration
+    func format_module_declaration(hdl: HDLModule, config: HDLConfig) -> string {
+        match config.language {
+            HDLLanguage.Verilog2001 => {
+                let mut decl = format!("module {} ", hdl.name)
+                
+                // Add parameter list
+                if hdl.parameters.len() > 0 {
+                    decl += "#(\n"
+                    for (i, param) in hdl.parameters.enumerate() {
+                        decl += format!("    parameter {} = {}", param.name, param.default_value)
+                        if i < hdl.parameters.len() - 1 {
+                            decl += ","
+                        }
+                        decl += "\n"
+                    }
+                    decl += ") "
+                }
+                
+                // Add port list
+                decl += "(\n"
+                for (i, port) in hdl.ports.enumerate() {
+                    decl += format!("    {}", format_port_declaration(port, config))
+                    if i < hdl.ports.len() - 1 {
+                        decl += ","
+                    }
+                    decl += "\n"
+                }
+                decl += ");\n\n"
+                
+                decl
+            }
+            _ => panic!("Unsupported HDL language")
+        }
+    }
+    
+    // Format always block
+    func format_always_block(block: AlwaysBlock, config: HDLConfig) -> string {
+        let mut output = "\n"
+        
+        // Format sensitivity list
+        match block.sensitivity {
+            SensitivityList.All => {
+                output += "always @(*) begin\n"
+            }
+            SensitivityList.Edge(edge_type, signal) => {
+                let edge = match edge_type {
+                    EdgeType.Positive => "posedge",
+                    EdgeType.Negative => "negedge"
+                }
+                output += format!("always @({} {}) begin\n", edge, signal)
+            }
+            SensitivityList.Signals(signals) => {
+                output += format!("always @({}) begin\n", signals.join(" or "))
+            }
+        }
+        
+        // Format statements with proper indentation
+        for stmt in block.statements {
+            output += format_statement(stmt, 1, config)
+        }
+        
+        output += "end\n"
+        output
+    }
+    
+    // Generate synthesis constraints
+    func generate_constraints(hw_module: synthesizer.HardwareModule, 
+                            config: HDLConfig) -> string {
+        let mut constraints = ""
+        
+        // Timing constraints
+        for constraint in hw_module.timing_constraints {
+            match constraint.constraint_type {
+                ConstraintType.ClockPeriod => {
+                    constraints += format!("create_clock -period {} [get_ports {}]\n",
+                                         constraint.value, config.clock_name)
+                }
+                ConstraintType.InputDelay => {
+                    constraints += format!("set_input_delay {} -clock {} [get_ports {}]\n",
+                                         constraint.value, config.clock_name, constraint.signal)
+                }
+                ConstraintType.OutputDelay => {
+                    constraints += format!("set_output_delay {} -clock {} [get_ports {}]\n",
+                                         constraint.value, config.clock_name, constraint.signal)
+                }
+                _ => {}
+            }
+        }
+        
+        constraints
+    }
+    
+    // Generate testbench template
+    func generate_testbench(hw_module: synthesizer.HardwareModule, 
+                          config: HDLConfig) -> string {
+        let mut tb = ""
+        
+        // Testbench header
+        tb += format!("`timescale 1ns / 1ps\n\n")
+        tb += format!("module {}_tb;\n\n", hw_module.name)
+        
+        // Signal declarations
+        tb += "    // Inputs\n"
+        tb += format!("    reg {};\n", config.clock_name)
+        tb += format!("    reg {};\n", config.reset_name)
+        
+        for input in hw_module.inputs {
+            tb += format!("    reg [{}-1:0] {};\n", input.width, input.name)
+        }
+        
+        tb += "\n    // Outputs\n"
+        for output in hw_module.outputs {
+            tb += format!("    wire [{}-1:0] {};\n", output.width, output.name)
+        }
+        
+        // DUT instantiation
+        tb += format!("\n    // Device Under Test\n")
+        tb += format!("    {} dut (\n", hw_module.name)
+        tb += format!("        .{}({}),\n", config.clock_name, config.clock_name)
+        tb += format!("        .{}({}),\n", config.reset_name, config.reset_name)
+        
+        for input in hw_module.inputs {
+            tb += format!("        .{}({}),\n", input.name, input.name)
+        }
+        
+        for (i, output) in hw_module.outputs.enumerate() {
+            tb += format!("        .{}({})", output.name, output.name)
+            if i < hw_module.outputs.len() - 1 {
+                tb += ","
+            }
+            tb += "\n"
+        }
+        tb += "    );\n\n"
+        
+        // Clock generation
+        tb += "    // Clock generation\n"
+        tb += format!("    initial {} = 0;\n", config.clock_name)
+        tb += format!("    always #5 {} = ~{};\n\n", config.clock_name, config.clock_name)
+        
+        // Test stimulus
+        tb += generate_test_stimulus(hw_module, config)
+        
+        tb += "\nendmodule\n"
+        tb
+    }
+}
+
+// Example usage:
+// let config = HDLConfig {
+//     language: HDLLanguage.Verilog2001,
+//     style: CodingStyle.RTL,
+//     clock_name: "clk",
+//     reset_name: "rst_n",
+//     reset_polarity: ResetPolarity.ActiveLow,
+//     data_width: 32,
+//     vendor_primitives: false
+// }
+//
+// let verilog_code = generate_verilog(hardware_module, config)
+// let constraints = generate_constraints(hardware_module, config)
+// let testbench = generate_testbench(hardware_module, config)

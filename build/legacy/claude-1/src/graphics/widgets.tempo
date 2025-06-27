@@ -1,0 +1,592 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Basic UI Widgets for AtomicOS
+// Deterministic, fixed-time rendering with static allocation
+// No dynamic memory allocation
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
+// Widget types
+typedef enum {
+    WIDGET_BUTTON,
+    WIDGET_LABEL,
+    WIDGET_TEXTBOX,
+    WIDGET_CHECKBOX,
+    WIDGET_RADIOBUTTON,
+    WIDGET_PROGRESSBAR,
+    WIDGET_SLIDER,
+    WIDGET_PANEL
+} widget_type_t;
+
+// Widget states
+#define WIDGET_STATE_NORMAL   0x00
+#define WIDGET_STATE_HOVER    0x01
+#define WIDGET_STATE_PRESSED  0x02
+#define WIDGET_STATE_FOCUSED  0x04
+#define WIDGET_STATE_DISABLED 0x08
+#define WIDGET_STATE_CHECKED  0x10
+
+// Maximum widgets and text length
+#define MAX_WIDGETS 128
+#define MAX_WIDGET_TEXT 256
+
+// Color scheme
+typedef struct {
+    uint32_t bg_normal;
+    uint32_t bg_hover;
+    uint32_t bg_pressed;
+    uint32_t bg_disabled;
+    uint32_t fg_normal;
+    uint32_t fg_disabled;
+    uint32_t border_normal;
+    uint32_t border_focused;
+} widget_colors_t;
+
+// Default color scheme
+static const widget_colors_t default_colors = {
+    .bg_normal = 0xFFE0E0E0,
+    .bg_hover = 0xFFF0F0F0,
+    .bg_pressed = 0xFFD0D0D0,
+    .bg_disabled = 0xFFC0C0C0,
+    .fg_normal = 0xFF000000,
+    .fg_disabled = 0xFF808080,
+    .border_normal = 0xFF808080,
+    .border_focused = 0xFF0080FF
+};
+
+// Widget structure
+typedef struct {
+    uint16_t id;
+    widget_type_t type;
+    uint16_t x;
+    uint16_t y;
+    uint16_t width;
+    uint16_t height;
+    uint8_t state;
+    
+    // Widget-specific data
+    union {
+        struct { // Button/Label
+            char text[MAX_WIDGET_TEXT];
+            uint8_t text_align; // 0=left, 1=center, 2=right
+        } button;
+        
+        struct { // Textbox
+            char text[MAX_WIDGET_TEXT];
+            uint16_t cursor_pos;
+            uint16_t selection_start;
+            uint16_t selection_end;
+        } textbox;
+        
+        struct { // Checkbox/Radio
+            bool checked;
+            char text[MAX_WIDGET_TEXT];
+            uint16_t group_id; // For radio buttons
+        } checkbox;
+        
+        struct { // Progress bar
+            uint8_t value; // 0-100
+            bool show_text;
+        } progress;
+        
+        struct { // Slider
+            uint16_t value;
+            uint16_t min_value;
+            uint16_t max_value;
+        } slider;
+    } data;
+    
+    widget_colors_t colors;
+} widget_t;
+
+// Widget manager
+typedef struct {
+    widget_t widgets[MAX_WIDGETS];
+    uint16_t widget_count;
+    uint16_t focused_widget;
+    uint16_t hover_widget;
+} widget_manager_t;
+
+static widget_manager_t manager;
+
+// Forward declarations for font rendering
+extern void font_render_string_aligned(uint32_t* buffer, uint16_t buffer_width, 
+                                       uint16_t buffer_height, uint16_t x, uint16_t y, 
+                                       uint16_t max_width, const char* text, 
+                                       uint8_t align, uint32_t fg_color, 
+                                       uint32_t bg_color, uint8_t style);
+
+// Initialize widget system
+// O(1) time
+void widgets_init(void) {
+    memset(&manager, 0, sizeof(widget_manager_t));
+    manager.focused_widget = 0xFFFF;
+    manager.hover_widget = 0xFFFF;
+}
+
+// Create a button widget
+// O(1) time
+uint16_t widget_create_button(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                              const char* text) {
+    if (manager.widget_count >= MAX_WIDGETS) return 0xFFFF;
+    
+    widget_t* w = &manager.widgets[manager.widget_count];
+    w->id = manager.widget_count + 1;
+    w->type = WIDGET_BUTTON;
+    w->x = x;
+    w->y = y;
+    w->width = width;
+    w->height = height;
+    w->state = WIDGET_STATE_NORMAL;
+    w->colors = default_colors;
+    
+    strncpy(w->data.button.text, text, MAX_WIDGET_TEXT - 1);
+    w->data.button.text[MAX_WIDGET_TEXT - 1] = '\0';
+    w->data.button.text_align = 1; // Center
+    
+    manager.widget_count++;
+    return w->id;
+}
+
+// Create a label widget
+// O(1) time
+uint16_t widget_create_label(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                             const char* text) {
+    if (manager.widget_count >= MAX_WIDGETS) return 0xFFFF;
+    
+    widget_t* w = &manager.widgets[manager.widget_count];
+    w->id = manager.widget_count + 1;
+    w->type = WIDGET_LABEL;
+    w->x = x;
+    w->y = y;
+    w->width = width;
+    w->height = height;
+    w->state = WIDGET_STATE_NORMAL;
+    w->colors = default_colors;
+    
+    strncpy(w->data.button.text, text, MAX_WIDGET_TEXT - 1);
+    w->data.button.text[MAX_WIDGET_TEXT - 1] = '\0';
+    w->data.button.text_align = 0; // Left
+    
+    manager.widget_count++;
+    return w->id;
+}
+
+// Create a textbox widget
+// O(1) time
+uint16_t widget_create_textbox(uint16_t x, uint16_t y, uint16_t width, uint16_t height) {
+    if (manager.widget_count >= MAX_WIDGETS) return 0xFFFF;
+    
+    widget_t* w = &manager.widgets[manager.widget_count];
+    w->id = manager.widget_count + 1;
+    w->type = WIDGET_TEXTBOX;
+    w->x = x;
+    w->y = y;
+    w->width = width;
+    w->height = height;
+    w->state = WIDGET_STATE_NORMAL;
+    w->colors = default_colors;
+    
+    w->data.textbox.text[0] = '\0';
+    w->data.textbox.cursor_pos = 0;
+    w->data.textbox.selection_start = 0;
+    w->data.textbox.selection_end = 0;
+    
+    manager.widget_count++;
+    return w->id;
+}
+
+// Create a checkbox widget
+// O(1) time
+uint16_t widget_create_checkbox(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                                const char* text, bool checked) {
+    if (manager.widget_count >= MAX_WIDGETS) return 0xFFFF;
+    
+    widget_t* w = &manager.widgets[manager.widget_count];
+    w->id = manager.widget_count + 1;
+    w->type = WIDGET_CHECKBOX;
+    w->x = x;
+    w->y = y;
+    w->width = width;
+    w->height = height;
+    w->state = checked ? WIDGET_STATE_CHECKED : WIDGET_STATE_NORMAL;
+    w->colors = default_colors;
+    
+    strncpy(w->data.checkbox.text, text, MAX_WIDGET_TEXT - 1);
+    w->data.checkbox.text[MAX_WIDGET_TEXT - 1] = '\0';
+    w->data.checkbox.checked = checked;
+    w->data.checkbox.group_id = 0;
+    
+    manager.widget_count++;
+    return w->id;
+}
+
+// Create a progress bar widget
+// O(1) time
+uint16_t widget_create_progressbar(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                                   uint8_t value) {
+    if (manager.widget_count >= MAX_WIDGETS) return 0xFFFF;
+    
+    widget_t* w = &manager.widgets[manager.widget_count];
+    w->id = manager.widget_count + 1;
+    w->type = WIDGET_PROGRESSBAR;
+    w->x = x;
+    w->y = y;
+    w->width = width;
+    w->height = height;
+    w->state = WIDGET_STATE_NORMAL;
+    w->colors = default_colors;
+    
+    w->data.progress.value = value > 100 ? 100 : value;
+    w->data.progress.show_text = true;
+    
+    manager.widget_count++;
+    return w->id;
+}
+
+// Draw a button
+// O(width * height) time
+static void draw_button(widget_t* w, uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height) {
+    // Select background color based on state
+    uint32_t bg_color = w->colors.bg_normal;
+    if (w->state & WIDGET_STATE_DISABLED) {
+        bg_color = w->colors.bg_disabled;
+    } else if (w->state & WIDGET_STATE_PRESSED) {
+        bg_color = w->colors.bg_pressed;
+    } else if (w->state & WIDGET_STATE_HOVER) {
+        bg_color = w->colors.bg_hover;
+    }
+    
+    uint32_t border_color = (w->state & WIDGET_STATE_FOCUSED) ? 
+                            w->colors.border_focused : w->colors.border_normal;
+    uint32_t text_color = (w->state & WIDGET_STATE_DISABLED) ? 
+                          w->colors.fg_disabled : w->colors.fg_normal;
+    
+    // Draw background
+    for (uint16_t y = w->y + 1; y < w->y + w->height - 1; y++) {
+        for (uint16_t x = w->x + 1; x < w->x + w->width - 1; x++) {
+            if (x < buffer_width && y < buffer_height) {
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+    }
+    
+    // Draw border
+    for (uint16_t x = w->x; x < w->x + w->width; x++) {
+        if (x < buffer_width && w->y < buffer_height) {
+            buffer[w->y * buffer_width + x] = border_color;
+        }
+        if (x < buffer_width && w->y + w->height - 1 < buffer_height) {
+            buffer[(w->y + w->height - 1) * buffer_width + x] = border_color;
+        }
+    }
+    
+    for (uint16_t y = w->y; y < w->y + w->height; y++) {
+        if (w->x < buffer_width && y < buffer_height) {
+            buffer[y * buffer_width + w->x] = border_color;
+        }
+        if (w->x + w->width - 1 < buffer_width && y < buffer_height) {
+            buffer[y * buffer_width + (w->x + w->width - 1)] = border_color;
+        }
+    }
+    
+    // Draw text
+    font_render_string_aligned(buffer, buffer_width, buffer_height,
+                               w->x + 4, w->y + (w->height - 16) / 2, w->width - 8,
+                               w->data.button.text, w->data.button.text_align,
+                               text_color, 0, 0);
+}
+
+// Draw a checkbox
+// O(width * height) time
+static void draw_checkbox(widget_t* w, uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height) {
+    uint32_t bg_color = (w->state & WIDGET_STATE_DISABLED) ? 
+                        w->colors.bg_disabled : w->colors.bg_normal;
+    uint32_t border_color = (w->state & WIDGET_STATE_FOCUSED) ? 
+                            w->colors.border_focused : w->colors.border_normal;
+    uint32_t text_color = (w->state & WIDGET_STATE_DISABLED) ? 
+                          w->colors.fg_disabled : w->colors.fg_normal;
+    
+    // Draw checkbox box (16x16)
+    uint16_t box_size = 16;
+    uint16_t box_y = w->y + (w->height - box_size) / 2;
+    
+    // Fill box
+    for (uint16_t y = box_y + 1; y < box_y + box_size - 1; y++) {
+        for (uint16_t x = w->x + 1; x < w->x + box_size - 1; x++) {
+            if (x < buffer_width && y < buffer_height) {
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+    }
+    
+    // Draw border
+    for (uint16_t i = 0; i < box_size; i++) {
+        if (w->x + i < buffer_width && box_y < buffer_height) {
+            buffer[box_y * buffer_width + w->x + i] = border_color;
+        }
+        if (w->x + i < buffer_width && box_y + box_size - 1 < buffer_height) {
+            buffer[(box_y + box_size - 1) * buffer_width + w->x + i] = border_color;
+        }
+        if (w->x < buffer_width && box_y + i < buffer_height) {
+            buffer[(box_y + i) * buffer_width + w->x] = border_color;
+        }
+        if (w->x + box_size - 1 < buffer_width && box_y + i < buffer_height) {
+            buffer[(box_y + i) * buffer_width + w->x + box_size - 1] = border_color;
+        }
+    }
+    
+    // Draw checkmark if checked
+    if (w->state & WIDGET_STATE_CHECKED) {
+        // Simple X mark
+        for (uint16_t i = 3; i < box_size - 3; i++) {
+            uint16_t x1 = w->x + i;
+            uint16_t y1 = box_y + i;
+            uint16_t x2 = w->x + box_size - 1 - i;
+            
+            if (x1 < buffer_width && y1 < buffer_height) {
+                buffer[y1 * buffer_width + x1] = text_color;
+            }
+            if (x2 < buffer_width && y1 < buffer_height) {
+                buffer[y1 * buffer_width + x2] = text_color;
+            }
+        }
+    }
+    
+    // Draw label text
+    font_render_string_aligned(buffer, buffer_width, buffer_height,
+                               w->x + box_size + 8, w->y + (w->height - 16) / 2,
+                               w->width - box_size - 8,
+                               w->data.checkbox.text, 0, // Left align
+                               text_color, 0, 0);
+}
+
+// Draw a progress bar
+// O(width * height) time
+static void draw_progressbar(widget_t* w, uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height) {
+    uint32_t bg_color = w->colors.bg_normal;
+    uint32_t fill_color = 0xFF00AA00; // Green
+    uint32_t border_color = w->colors.border_normal;
+    
+    // Draw background
+    for (uint16_t y = w->y + 1; y < w->y + w->height - 1; y++) {
+        for (uint16_t x = w->x + 1; x < w->x + w->width - 1; x++) {
+            if (x < buffer_width && y < buffer_height) {
+                buffer[y * buffer_width + x] = bg_color;
+            }
+        }
+    }
+    
+    // Draw filled portion
+    uint16_t fill_width = ((w->width - 2) * w->data.progress.value) / 100;
+    for (uint16_t y = w->y + 1; y < w->y + w->height - 1; y++) {
+        for (uint16_t x = w->x + 1; x < w->x + 1 + fill_width; x++) {
+            if (x < buffer_width && y < buffer_height) {
+                buffer[y * buffer_width + x] = fill_color;
+            }
+        }
+    }
+    
+    // Draw border
+    for (uint16_t x = w->x; x < w->x + w->width; x++) {
+        if (x < buffer_width && w->y < buffer_height) {
+            buffer[w->y * buffer_width + x] = border_color;
+        }
+        if (x < buffer_width && w->y + w->height - 1 < buffer_height) {
+            buffer[(w->y + w->height - 1) * buffer_width + x] = border_color;
+        }
+    }
+    
+    for (uint16_t y = w->y; y < w->y + w->height; y++) {
+        if (w->x < buffer_width && y < buffer_height) {
+            buffer[y * buffer_width + w->x] = border_color;
+        }
+        if (w->x + w->width - 1 < buffer_width && y < buffer_height) {
+            buffer[y * buffer_width + (w->x + w->width - 1)] = border_color;
+        }
+    }
+    
+    // Draw percentage text if enabled
+    if (w->data.progress.show_text) {
+        char percent_text[8];
+        uint16_t percent_len = 0;
+        
+        // Simple integer to string conversion
+        uint8_t val = w->data.progress.value;
+        if (val == 100) {
+            percent_text[0] = '1';
+            percent_text[1] = '0';
+            percent_text[2] = '0';
+            percent_len = 3;
+        } else if (val >= 10) {
+            percent_text[0] = '0' + (val / 10);
+            percent_text[1] = '0' + (val % 10);
+            percent_len = 2;
+        } else {
+            percent_text[0] = '0' + val;
+            percent_len = 1;
+        }
+        percent_text[percent_len++] = '%';
+        percent_text[percent_len] = '\0';
+        
+        font_render_string_aligned(buffer, buffer_width, buffer_height,
+                                   w->x, w->y + (w->height - 16) / 2, w->width,
+                                   percent_text, 1, // Center
+                                   w->colors.fg_normal, 0, 0);
+    }
+}
+
+// Render all widgets
+// O(num_widgets * average_widget_pixels) time
+void widgets_render(uint32_t* buffer, uint16_t buffer_width, uint16_t buffer_height) {
+    if (!buffer) return;
+    
+    // Draw widgets in order
+    for (uint16_t i = 0; i < manager.widget_count; i++) {
+        widget_t* w = &manager.widgets[i];
+        
+        switch (w->type) {
+            case WIDGET_BUTTON:
+            case WIDGET_LABEL:
+                draw_button(w, buffer, buffer_width, buffer_height);
+                break;
+                
+            case WIDGET_CHECKBOX:
+            case WIDGET_RADIOBUTTON:
+                draw_checkbox(w, buffer, buffer_width, buffer_height);
+                break;
+                
+            case WIDGET_PROGRESSBAR:
+                draw_progressbar(w, buffer, buffer_width, buffer_height);
+                break;
+                
+            // TODO: Implement other widget types
+            default:
+                break;
+        }
+    }
+}
+
+// Handle mouse events
+// O(num_widgets) time
+uint16_t widgets_handle_mouse(uint16_t x, uint16_t y, bool pressed, bool released) {
+    uint16_t hit_widget = 0xFFFF;
+    
+    // Find widget under mouse
+    for (uint16_t i = 0; i < manager.widget_count; i++) {
+        widget_t* w = &manager.widgets[i];
+        
+        if (x >= w->x && x < w->x + w->width &&
+            y >= w->y && y < w->y + w->height) {
+            hit_widget = w->id;
+            
+            // Update hover state
+            if (manager.hover_widget != w->id) {
+                // Clear old hover
+                if (manager.hover_widget != 0xFFFF && manager.hover_widget <= MAX_WIDGETS) {
+                    widget_t* old_hover = &manager.widgets[manager.hover_widget - 1];
+                    old_hover->state &= ~WIDGET_STATE_HOVER;
+                }
+                
+                // Set new hover
+                w->state |= WIDGET_STATE_HOVER;
+                manager.hover_widget = w->id;
+            }
+            
+            // Handle clicks
+            if (pressed && !(w->state & WIDGET_STATE_DISABLED)) {
+                w->state |= WIDGET_STATE_PRESSED;
+                
+                // Set focus
+                if (manager.focused_widget != w->id) {
+                    if (manager.focused_widget != 0xFFFF && manager.focused_widget <= MAX_WIDGETS) {
+                        widget_t* old_focus = &manager.widgets[manager.focused_widget - 1];
+                        old_focus->state &= ~WIDGET_STATE_FOCUSED;
+                    }
+                    w->state |= WIDGET_STATE_FOCUSED;
+                    manager.focused_widget = w->id;
+                }
+            }
+            
+            if (released && (w->state & WIDGET_STATE_PRESSED)) {
+                w->state &= ~WIDGET_STATE_PRESSED;
+                
+                // Handle widget-specific actions
+                if (w->type == WIDGET_CHECKBOX || w->type == WIDGET_RADIOBUTTON) {
+                    w->state ^= WIDGET_STATE_CHECKED;
+                    w->data.checkbox.checked = !w->data.checkbox.checked;
+                }
+                
+                return w->id; // Widget was clicked
+            }
+            
+            break;
+        }
+    }
+    
+    // Clear hover if mouse not over any widget
+    if (hit_widget == 0xFFFF && manager.hover_widget != 0xFFFF) {
+        if (manager.hover_widget <= MAX_WIDGETS) {
+            widget_t* old_hover = &manager.widgets[manager.hover_widget - 1];
+            old_hover->state &= ~WIDGET_STATE_HOVER;
+        }
+        manager.hover_widget = 0xFFFF;
+    }
+    
+    return released ? hit_widget : 0xFFFF;
+}
+
+// Update widget properties
+// O(1) time
+void widget_set_text(uint16_t widget_id, const char* text) {
+    if (widget_id == 0 || widget_id > MAX_WIDGETS) return;
+    
+    widget_t* w = &manager.widgets[widget_id - 1];
+    if (w->id == 0) return;
+    
+    switch (w->type) {
+        case WIDGET_BUTTON:
+        case WIDGET_LABEL:
+            strncpy(w->data.button.text, text, MAX_WIDGET_TEXT - 1);
+            w->data.button.text[MAX_WIDGET_TEXT - 1] = '\0';
+            break;
+            
+        case WIDGET_TEXTBOX:
+            strncpy(w->data.textbox.text, text, MAX_WIDGET_TEXT - 1);
+            w->data.textbox.text[MAX_WIDGET_TEXT - 1] = '\0';
+            w->data.textbox.cursor_pos = strlen(w->data.textbox.text);
+            break;
+            
+        case WIDGET_CHECKBOX:
+        case WIDGET_RADIOBUTTON:
+            strncpy(w->data.checkbox.text, text, MAX_WIDGET_TEXT - 1);
+            w->data.checkbox.text[MAX_WIDGET_TEXT - 1] = '\0';
+            break;
+    }
+}
+
+// Set widget state
+// O(1) time
+void widget_set_enabled(uint16_t widget_id, bool enabled) {
+    if (widget_id == 0 || widget_id > MAX_WIDGETS) return;
+    
+    widget_t* w = &manager.widgets[widget_id - 1];
+    if (w->id == 0) return;
+    
+    if (enabled) {
+        w->state &= ~WIDGET_STATE_DISABLED;
+    } else {
+        w->state |= WIDGET_STATE_DISABLED;
+    }
+}

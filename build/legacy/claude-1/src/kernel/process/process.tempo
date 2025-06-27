@@ -1,0 +1,710 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Process Management
+// Implements process creation, destruction, and PCB management
+
+module kernel.process.process
+
+import kernel.memory.vmm
+import kernel.memory.pmm
+import kernel.ipc.channels
+
+// Process Control Block (PCB)
+struct Process {
+    pid: u32                      // Process ID
+    ppid: u32                     // Parent process ID
+    name: string                  // Process name
+    state: ProcessState           // Current state
+    priority: u8                  // Scheduling priority
+    
+    // CPU context
+    context: CPUContext           // Saved CPU state
+    kernel_stack: usize          // Kernel stack pointer
+    user_stack: usize            // User stack pointer
+    
+    // Memory management
+    page_directory: *PageDirectory // Virtual memory space
+    heap_start: usize            // Heap starting address
+    heap_end: usize              // Current heap end
+    code_start: usize            // Code segment start
+    code_end: usize              // Code segment end
+    
+    // Scheduling information
+    time_slice: u32              // Remaining time slice
+    total_time: u64              // Total CPU time used
+    sleep_until: u64             // Wake up time if sleeping
+    
+    // IPC
+    channels: []Channel          // Open channels
+    message_queue: MessageQueue   // Pending messages
+    
+    // File descriptors
+    open_files: []FileDescriptor // Open file table
+    cwd: string                  // Current working directory
+    
+    // Signal handling
+    signal_mask: u64             // Blocked signals
+    signal_handlers: [64]fn(u32) // Signal handler functions
+    pending_signals: u64         // Pending signal bitmap
+    
+    // Process relationships
+    children: []u32              // Child process PIDs
+    exit_code: i32               // Exit code when terminated
+    wait_queue: []u32            // Processes waiting on this one
+}
+
+// Process states
+enum ProcessState {
+    New         // Being created
+    Ready       // Ready to run
+    Running     // Currently executing
+    Blocked     // Waiting for resource
+    Sleeping    // Timed sleep
+    Zombie      // Terminated but not cleaned up
+    Terminated  // Fully terminated
+}
+
+// CPU context for context switching
+struct CPUContext {
+    // General purpose registers
+    rax: u64
+    rbx: u64
+    rcx: u64
+    rdx: u64
+    rsi: u64
+    rdi: u64
+    rbp: u64
+    rsp: u64
+    r8: u64
+    r9: u64
+    r10: u64
+    r11: u64
+    r12: u64
+    r13: u64
+    r14: u64
+    r15: u64
+    
+    // Instruction pointer
+    rip: u64
+    
+    // Flags register
+    rflags: u64
+    
+    // Segment registers
+    cs: u16
+    ds: u16
+    es: u16
+    fs: u16
+    gs: u16
+    ss: u16
+    
+    // FPU/SSE state
+    fpu_state: [512]u8
+}
+
+// Message queue for IPC
+struct MessageQueue {
+    messages: []Message
+    capacity: usize
+    head: usize
+    tail: usize
+    lock: SpinLock
+}
+
+struct Message {
+    sender_pid: u32
+    content: []u8
+    timestamp: u64
+}
+
+// File descriptor
+struct FileDescriptor {
+    fd: i32
+    file_handle: *File
+    flags: u32
+    offset: u64
+}
+
+// Global process management state
+global proc_manager: ProcessManager
+
+struct ProcessManager {
+    processes: [MAX_PROCESSES]*Process
+    pid_counter: u32
+    process_count: u32
+    current_process: *Process
+    idle_process: *Process
+    lock: SpinLock
+}
+
+const MAX_PROCESSES = 4096
+const KERNEL_STACK_SIZE = 16384  // 16KB
+const USER_STACK_SIZE = 1048576  // 1MB
+const DEFAULT_TIME_SLICE = 10    // 10ms
+
+// Initialize process management subsystem
+@export
+fn init() {
+    proc_manager.pid_counter = 1  // PID 0 is reserved for idle
+    proc_manager.process_count = 0
+    proc_manager.lock = SpinLock{}
+    
+    // Create idle process
+    proc_manager.idle_process = create_idle_process()
+    proc_manager.current_process = proc_manager.idle_process
+}
+
+// Create a new process
+@export
+fn create(name: string, entry_point: fn()) -> *Process {
+    proc_manager.lock.acquire()
+    defer proc_manager.lock.release()
+    
+    // Allocate PCB
+    let proc = allocate_pcb()
+    if proc == null {
+        return null
+    }
+    
+    // Initialize PCB fields
+    proc.pid = proc_manager.pid_counter++
+    proc.ppid = get_current_pid()
+    proc.name = name
+    proc.state = ProcessState.New
+    proc.priority = PRIORITY_NORMAL
+    proc.time_slice = DEFAULT_TIME_SLICE
+    proc.total_time = 0
+    proc.exit_code = 0
+    
+    // Set up memory space
+    if !setup_process_memory(proc) {
+        free_pcb(proc)
+        return null
+    }
+    
+    // Set up stacks
+    if !setup_process_stacks(proc) {
+        cleanup_process_memory(proc)
+        free_pcb(proc)
+        return null
+    }
+    
+    // Initialize CPU context
+    init_process_context(proc, entry_point)
+    
+    // Initialize IPC structures
+    proc.message_queue = MessageQueue{
+        capacity: 64,
+        messages: alloc([]Message, 64),
+        head: 0,
+        tail: 0,
+        lock: SpinLock{}
+    }
+    
+    // Add to parent's children list
+    if proc.ppid != 0 {
+        let parent = get_process(proc.ppid)
+        if parent != null {
+            parent.children.push(proc.pid)
+        }
+    }
+    
+    // Mark as ready
+    proc.state = ProcessState.Ready
+    proc_manager.process_count++
+    
+    return proc
+}
+
+// Create idle process
+fn create_idle_process() -> *Process {
+    let idle = allocate_pcb()
+    
+    idle.pid = 0
+    idle.ppid = 0
+    idle.name = "idle"
+    idle.state = ProcessState.Ready
+    idle.priority = PRIORITY_IDLE
+    
+    // Idle process runs in kernel space only
+    idle.page_directory = kernel_page_directory
+    
+    // Set up minimal context
+    idle.context.rip = idle_process_loop as usize
+    idle.context.cs = KERNEL_CS
+    idle.context.rflags = RFLAGS_IF  // Interrupts enabled
+    
+    return idle
+}
+
+// Idle process main loop
+fn idle_process_loop() {
+    loop {
+        // Enable interrupts and halt
+        asm("sti; hlt")
+    }
+}
+
+// Set up process virtual memory space
+fn setup_process_memory(proc: *Process) -> bool {
+    // Create page directory
+    proc.page_directory = vmm.create_page_directory()
+    if proc.page_directory == null {
+        return false
+    }
+    
+    // Map kernel space (higher half)
+    vmm.map_kernel_space(proc.page_directory)
+    
+    // Set up user space regions
+    proc.code_start = USER_CODE_START
+    proc.heap_start = USER_HEAP_START
+    proc.heap_end = USER_HEAP_START
+    
+    return true
+}
+
+// Set up process stacks
+fn setup_process_stacks(proc: *Process) -> bool {
+    // Allocate kernel stack
+    let kernel_stack_base = pmm.alloc_pages(KERNEL_STACK_SIZE / PAGE_SIZE)
+    if kernel_stack_base == 0 {
+        return false
+    }
+    
+    // Map kernel stack
+    vmm.map_pages(
+        proc.page_directory,
+        KERNEL_STACK_TOP - KERNEL_STACK_SIZE,
+        kernel_stack_base,
+        KERNEL_STACK_SIZE / PAGE_SIZE,
+        VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_KERNEL
+    )
+    
+    proc.kernel_stack = KERNEL_STACK_TOP
+    
+    // Allocate user stack
+    let user_stack_base = pmm.alloc_pages(USER_STACK_SIZE / PAGE_SIZE)
+    if user_stack_base == 0 {
+        pmm.free_pages(kernel_stack_base, KERNEL_STACK_SIZE / PAGE_SIZE)
+        return false
+    }
+    
+    // Map user stack
+    vmm.map_pages(
+        proc.page_directory,
+        USER_STACK_TOP - USER_STACK_SIZE,
+        user_stack_base,
+        USER_STACK_SIZE / PAGE_SIZE,
+        VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER
+    )
+    
+    proc.user_stack = USER_STACK_TOP
+    
+    return true
+}
+
+// Initialize process CPU context
+fn init_process_context(proc: *Process, entry_point: fn()) {
+    // Clear context
+    memset(&proc.context, 0, sizeof(CPUContext))
+    
+    // Set up initial register values
+    proc.context.rip = entry_point as u64
+    proc.context.rsp = proc.user_stack
+    proc.context.rbp = proc.user_stack
+    
+    // Set up segments
+    proc.context.cs = USER_CS
+    proc.context.ds = USER_DS
+    proc.context.es = USER_DS
+    proc.context.fs = USER_DS
+    proc.context.gs = USER_DS
+    proc.context.ss = USER_DS
+    
+    // Enable interrupts
+    proc.context.rflags = RFLAGS_IF | RFLAGS_RESERVED
+}
+
+// Fork current process
+@export
+fn fork() -> u32 {
+    let parent = get_current_process()
+    
+    // Create child process
+    let child = create(parent.name + "_child", null)
+    if child == null {
+        return -1
+    }
+    
+    // Copy parent's memory space
+    if !copy_process_memory(parent, child) {
+        destroy(child.pid)
+        return -1
+    }
+    
+    // Copy parent's context
+    child.context = parent.context
+    
+    // Set return values
+    // Parent gets child PID, child gets 0
+    child.context.rax = 0
+    
+    // Copy file descriptors
+    copy_file_descriptors(parent, child)
+    
+    // Child is ready to run
+    child.state = ProcessState.Ready
+    
+    return child.pid
+}
+
+// Execute new program
+@export
+fn exec(path: string, argv: []string, envp: []string) -> i32 {
+    let proc = get_current_process()
+    
+    // Load executable
+    let entry_point = load_executable(path, proc)
+    if entry_point == 0 {
+        return -1
+    }
+    
+    // Clear old memory mappings (except kernel)
+    clear_user_memory(proc)
+    
+    // Set up new stack with arguments
+    setup_exec_stack(proc, argv, envp)
+    
+    // Update context
+    proc.context.rip = entry_point
+    proc.context.rsp = proc.user_stack
+    
+    // Clear signal handlers
+    for i in 0..64 {
+        proc.signal_handlers[i] = null
+    }
+    
+    return 0
+}
+
+// Terminate current process
+@export
+fn exit(code: i32) {
+    let proc = get_current_process()
+    
+    proc.exit_code = code
+    proc.state = ProcessState.Zombie
+    
+    // Close all open files
+    for fd in proc.open_files {
+        if fd.file_handle != null {
+            close_file(fd)
+        }
+    }
+    
+    // Release memory (except PCB)
+    cleanup_process_memory(proc)
+    
+    // Reparent children to init
+    for child_pid in proc.children {
+        let child = get_process(child_pid)
+        if child != null {
+            child.ppid = 1  // Init process
+        }
+    }
+    
+    // Wake up parent if waiting
+    if proc.ppid != 0 {
+        let parent = get_process(proc.ppid)
+        if parent != null && parent.state == ProcessState.Blocked {
+            // Check if parent is waiting for this child
+            wake_up_process(parent)
+        }
+    }
+    
+    // Never returns - scheduler will switch away
+    yield()
+}
+
+// Wait for child process
+@export
+fn wait(status: *i32) -> u32 {
+    let proc = get_current_process()
+    
+    loop {
+        // Check for zombie children
+        for child_pid in proc.children {
+            let child = get_process(child_pid)
+            if child != null && child.state == ProcessState.Zombie {
+                // Reap the child
+                if status != null {
+                    *status = child.exit_code
+                }
+                
+                let pid = child.pid
+                cleanup(child)
+                return pid
+            }
+        }
+        
+        // No zombie children, block
+        proc.state = ProcessState.Blocked
+        yield()
+    }
+}
+
+// Clean up zombie process
+@export
+fn cleanup(proc: *Process) {
+    // Remove from parent's children list
+    if proc.ppid != 0 {
+        let parent = get_process(proc.ppid)
+        if parent != null {
+            parent.children.remove(proc.pid)
+        }
+    }
+    
+    // Free PCB
+    free_pcb(proc)
+    proc_manager.process_count--
+}
+
+// Switch to another process
+@export
+fn switch_to(next: *Process) {
+    let current = get_current_process()
+    
+    if current == next {
+        return
+    }
+    
+    // Save current context
+    save_context(&current.context)
+    
+    // Update current process
+    proc_manager.current_process = next
+    
+    // Switch page tables
+    vmm.switch_page_directory(next.page_directory)
+    
+    // Restore next context
+    restore_context(&next.context)
+}
+
+// Yield CPU to scheduler
+@export
+fn yield() {
+    // Will trigger scheduler via timer interrupt
+    asm("int $0x20")  // Scheduler interrupt
+}
+
+// Sleep for specified milliseconds
+@export
+fn sleep(ms: u32) {
+    let proc = get_current_process()
+    
+    proc.state = ProcessState.Sleeping
+    proc.sleep_until = get_system_time() + ms
+    
+    yield()
+}
+
+// Wake up a process
+fn wake_up_process(proc: *Process) {
+    if proc.state == ProcessState.Blocked || proc.state == ProcessState.Sleeping {
+        proc.state = ProcessState.Ready
+        proc.sleep_until = 0
+    }
+}
+
+// Get current process
+@export
+fn get_current_process() -> *Process {
+    return proc_manager.current_process
+}
+
+// Get current PID
+@export
+fn get_current_pid() -> u32 {
+    return proc_manager.current_process.pid
+}
+
+// Get process by PID
+@export
+fn get_process(pid: u32) -> *Process {
+    for i in 0..MAX_PROCESSES {
+        if proc_manager.processes[i] != null && proc_manager.processes[i].pid == pid {
+            return proc_manager.processes[i]
+        }
+    }
+    return null
+}
+
+// Send signal to process
+@export
+fn kill(pid: u32, signal: u32) -> i32 {
+    let proc = get_process(pid)
+    if proc == null {
+        return -1
+    }
+    
+    // Check permissions
+    if !can_signal(get_current_process(), proc) {
+        return -1
+    }
+    
+    // Set pending signal
+    proc.pending_signals |= (1 << signal)
+    
+    // Wake up if blocked
+    if proc.state == ProcessState.Blocked {
+        wake_up_process(proc)
+    }
+    
+    return 0
+}
+
+// Check if process can signal another
+fn can_signal(sender: *Process, target: *Process) -> bool {
+    // Same process always allowed
+    if sender.pid == target.pid {
+        return true
+    }
+    
+    // Parent can signal children
+    if sender.pid == target.ppid {
+        return true
+    }
+    
+    // Init process (PID 1) can signal anyone
+    if sender.pid == 1 {
+        return true
+    }
+    
+    // TODO: Check user/group permissions
+    
+    return false
+}
+
+// Handle pending signals
+@export
+fn handle_signals() {
+    let proc = get_current_process()
+    
+    if proc.pending_signals == 0 {
+        return
+    }
+    
+    for sig in 0..64 {
+        if (proc.pending_signals & (1 << sig)) != 0 {
+            // Clear pending bit
+            proc.pending_signals &= ~(1 << sig)
+            
+            // Check if signal is blocked
+            if (proc.signal_mask & (1 << sig)) != 0 {
+                continue
+            }
+            
+            // Call handler or default action
+            if proc.signal_handlers[sig] != null {
+                proc.signal_handlers[sig](sig)
+            } else {
+                default_signal_handler(sig)
+            }
+        }
+    }
+}
+
+// Default signal handler
+fn default_signal_handler(signal: u32) {
+    match signal {
+        SIGTERM -> exit(0)
+        SIGKILL -> exit(-1)
+        SIGSTOP -> {
+            get_current_process().state = ProcessState.Blocked
+            yield()
+        }
+        SIGCONT -> {
+            // Handled by scheduler
+        }
+        _ -> {
+            // Ignore
+        }
+    }
+}
+
+// Memory management helpers
+fn allocate_pcb() -> *Process {
+    for i in 0..MAX_PROCESSES {
+        if proc_manager.processes[i] == null {
+            proc_manager.processes[i] = alloc(Process)
+            return proc_manager.processes[i]
+        }
+    }
+    return null
+}
+
+fn free_pcb(proc: *Process) {
+    for i in 0..MAX_PROCESSES {
+        if proc_manager.processes[i] == proc {
+            proc_manager.processes[i] = null
+            free(proc)
+            break
+        }
+    }
+}
+
+fn cleanup_process_memory(proc: *Process) {
+    if proc.page_directory != null && proc.page_directory != kernel_page_directory {
+        vmm.destroy_page_directory(proc.page_directory)
+    }
+}
+
+// Copy process memory for fork
+fn copy_process_memory(parent: *Process, child: *Process) -> bool {
+    // TODO: Implement copy-on-write
+    return vmm.copy_address_space(parent.page_directory, child.page_directory)
+}
+
+// Assembly functions
+@extern fn save_context(ctx: *CPUContext)
+@extern fn restore_context(ctx: *CPUContext)
+@extern fn get_system_time() -> u64
+
+// Constants
+const PRIORITY_IDLE = 0
+const PRIORITY_LOW = 1
+const PRIORITY_NORMAL = 2
+const PRIORITY_HIGH = 3
+const PRIORITY_REALTIME = 4
+
+const USER_CODE_START = 0x400000
+const USER_HEAP_START = 0x600000
+const USER_STACK_TOP = 0x7FFFFFFFFFFF
+const KERNEL_STACK_TOP = 0xFFFFFF8000000000
+
+const PAGE_SIZE = 4096
+
+const KERNEL_CS = 0x08
+const KERNEL_DS = 0x10
+const USER_CS = 0x1B
+const USER_DS = 0x23
+
+const RFLAGS_IF = 1 << 9
+const RFLAGS_RESERVED = 1 << 1
+
+// Signals
+const SIGTERM = 15
+const SIGKILL = 9
+const SIGSTOP = 19
+const SIGCONT = 18

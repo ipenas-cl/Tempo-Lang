@@ -1,0 +1,330 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Dead code elimination pass
+// Removes unreachable and unused code while preserving WCET guarantees
+
+module passes::dead_code {
+    use mir::{MirFunction, MirInst, BasicBlock};
+    use optimizer::{OptimizationPass, LivenessAnalysis, BitSet};
+    
+    pub struct DeadCodePass {
+        removed_instructions: u32,
+        removed_blocks: u32,
+    }
+    
+    impl DeadCodePass {
+        pub fn new() -> Self {
+            DeadCodePass {
+                removed_instructions: 0,
+                removed_blocks: 0,
+            }
+        }
+        
+        // Mark reachable blocks using DFS
+        fn mark_reachable_blocks(func: &MirFunction) -> BitSet {
+            let mut reachable = BitSet::new(func.blocks.len());
+            let mut worklist = vec![func.entry_block];
+            
+            while let Some(block_id) = worklist.pop() {
+                if !reachable.contains(block_id as usize) {
+                    reachable.insert(block_id as usize);
+                    
+                    // Add successors to worklist
+                    if let Some(block) = func.blocks.iter().find(|b| b.id == block_id) {
+                        for &succ in &block.successors {
+                            if !reachable.contains(succ as usize) {
+                                worklist.push(succ);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            reachable
+        }
+        
+        // Check if an instruction has side effects
+        fn has_side_effects(inst: &MirInst) -> bool {
+            match inst {
+                // These instructions have observable effects
+                MirInst::Store(_, _, _) |
+                MirInst::Call(_, _, _) |
+                MirInst::Return(_) |
+                MirInst::Push(_) |
+                MirInst::CheckDeadline(_) => true,
+                
+                // Control flow instructions
+                MirInst::Jump(_) |
+                MirInst::JumpIf(_, _, _) => true,
+                
+                // Pure computations have no side effects
+                _ => false,
+            }
+        }
+        
+        // Check if a register is used in an instruction
+        fn uses_register(inst: &MirInst, reg: u32) -> bool {
+            match inst {
+                MirInst::Move(_, src) |
+                MirInst::Not(_, src) |
+                MirInst::Push(src) |
+                MirInst::Shl(_, src, _) |
+                MirInst::Shr(_, src, _) => *src == reg,
+                
+                MirInst::Add(_, src1, src2) |
+                MirInst::Sub(_, src1, src2) |
+                MirInst::Mul(_, src1, src2) |
+                MirInst::Div(_, src1, src2) |
+                MirInst::Mod(_, src1, src2) |
+                MirInst::And(_, src1, src2) |
+                MirInst::Or(_, src1, src2) |
+                MirInst::Xor(_, src1, src2) |
+                MirInst::Eq(_, src1, src2) |
+                MirInst::Ne(_, src1, src2) |
+                MirInst::Lt(_, src1, src2) |
+                MirInst::Le(_, src1, src2) |
+                MirInst::Gt(_, src1, src2) |
+                MirInst::Ge(_, src1, src2) => *src1 == reg || *src2 == reg,
+                
+                MirInst::JumpIf(cond, _, _) => *cond == reg,
+                MirInst::Load(_, addr, _) |
+                MirInst::Store(addr, _, _) => *addr == reg,
+                MirInst::Store(_, value, _) => *value == reg,
+                MirInst::Return(Some(value)) => *value == reg,
+                MirInst::CheckDeadline(deadline) => *deadline == reg,
+                
+                MirInst::Call(_, _, args) => args.contains(&reg),
+                MirInst::Phi(_, sources) => sources.iter().any(|(_, v)| *v == reg),
+                
+                _ => false,
+            }
+        }
+        
+        // Get the destination register of an instruction
+        fn get_dest_register(inst: &MirInst) -> Option<u32> {
+            match inst {
+                MirInst::LoadConst(dst, _) |
+                MirInst::Move(dst, _) |
+                MirInst::Add(dst, _, _) |
+                MirInst::Sub(dst, _, _) |
+                MirInst::Mul(dst, _, _) |
+                MirInst::Div(dst, _, _) |
+                MirInst::Mod(dst, _, _) |
+                MirInst::And(dst, _, _) |
+                MirInst::Or(dst, _, _) |
+                MirInst::Xor(dst, _, _) |
+                MirInst::Not(dst, _) |
+                MirInst::Shl(dst, _, _) |
+                MirInst::Shr(dst, _, _) |
+                MirInst::Eq(dst, _, _) |
+                MirInst::Ne(dst, _, _) |
+                MirInst::Lt(dst, _, _) |
+                MirInst::Le(dst, _, _) |
+                MirInst::Gt(dst, _, _) |
+                MirInst::Ge(dst, _, _) |
+                MirInst::Call(dst, _, _) |
+                MirInst::Load(dst, _, _) |
+                MirInst::Pop(dst) |
+                MirInst::GetTime(dst) |
+                MirInst::Phi(dst, _) => Some(*dst),
+                
+                _ => None,
+            }
+        }
+        
+        // Remove dead instructions from a block
+        fn eliminate_dead_instructions(
+            &mut self,
+            block: &mut BasicBlock,
+            live_out: &BitSet,
+            all_blocks: &[BasicBlock]
+        ) -> bool {
+            let mut changed = false;
+            let mut live = live_out.clone();
+            
+            // Process instructions in reverse order
+            let mut new_instructions = Vec::new();
+            
+            for inst in block.instructions.iter().rev() {
+                let mut keep = true;
+                
+                // Check if instruction is dead
+                if let Some(dst) = Self::get_dest_register(inst) {
+                    if !live.contains(dst as usize) && !Self::has_side_effects(inst) {
+                        // Dead instruction - remove it
+                        keep = false;
+                        self.removed_instructions += 1;
+                        changed = true;
+                    }
+                }
+                
+                if keep {
+                    // Update liveness before this instruction
+                    // Kill destination
+                    if let Some(dst) = Self::get_dest_register(inst) {
+                        live.remove(dst as usize);
+                    }
+                    
+                    // Gen uses
+                    for reg in 0..live.bits.len() as u32 {
+                        if Self::uses_register(inst, reg) {
+                            live.insert(reg as usize);
+                        }
+                    }
+                    
+                    new_instructions.push(inst.clone());
+                }
+            }
+            
+            if changed {
+                new_instructions.reverse();
+                block.instructions = new_instructions;
+            }
+            
+            changed
+        }
+        
+        // Simplify phi nodes by removing unreachable predecessors
+        fn simplify_phi_nodes(&mut self, func: &mut MirFunction, reachable: &BitSet) -> bool {
+            let mut changed = false;
+            
+            for block in &mut func.blocks {
+                for inst in &mut block.instructions {
+                    if let MirInst::Phi(dst, sources) = inst {
+                        let new_sources: Vec<(u32, u32)> = sources
+                            .iter()
+                            .filter(|(block_id, _)| reachable.contains(*block_id as usize))
+                            .cloned()
+                            .collect();
+                        
+                        if new_sources.len() != sources.len() {
+                            *sources = new_sources;
+                            changed = true;
+                        }
+                        
+                        // If phi has only one source, replace with move
+                        if sources.len() == 1 {
+                            *inst = MirInst::Move(*dst, sources[0].1);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            
+            changed
+        }
+        
+        // Remove empty blocks that only contain a jump
+        fn remove_empty_blocks(&mut self, func: &mut MirFunction) -> bool {
+            let mut changed = false;
+            let mut block_mapping = vec![None; func.blocks.len()];
+            
+            // Find blocks that can be removed
+            for (i, block) in func.blocks.iter().enumerate() {
+                if block.instructions.len() == 1 {
+                    if let MirInst::Jump(target) = block.instructions[0] {
+                        if block.id != func.entry_block {
+                            block_mapping[i] = Some(target);
+                        }
+                    }
+                }
+            }
+            
+            // Update jumps to skip removed blocks
+            for block in &mut func.blocks {
+                for inst in &mut block.instructions {
+                    match inst {
+                        MirInst::Jump(target) => {
+                            if let Some(Some(new_target)) = block_mapping.get(*target as usize) {
+                                *target = *new_target;
+                                changed = true;
+                            }
+                        },
+                        MirInst::JumpIf(_, true_block, false_block) => {
+                            if let Some(Some(new_target)) = block_mapping.get(*true_block as usize) {
+                                *true_block = *new_target;
+                                changed = true;
+                            }
+                            if let Some(Some(new_target)) = block_mapping.get(*false_block as usize) {
+                                *false_block = *new_target;
+                                changed = true;
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            }
+            
+            // Remove the empty blocks
+            if changed {
+                let mut new_blocks = Vec::new();
+                for (i, block) in func.blocks.into_iter().enumerate() {
+                    if block_mapping[i].is_none() {
+                        new_blocks.push(block);
+                    } else {
+                        self.removed_blocks += 1;
+                    }
+                }
+                func.blocks = new_blocks;
+            }
+            
+            changed
+        }
+    }
+    
+    impl OptimizationPass for DeadCodePass {
+        fn name(&self) -> &str {
+            "dead-code-elimination"
+        }
+        
+        fn run_on_function(&mut self, func: &mut MirFunction) -> bool {
+            self.removed_instructions = 0;
+            self.removed_blocks = 0;
+            let mut changed = false;
+            
+            // Phase 1: Remove unreachable blocks
+            let reachable = Self::mark_reachable_blocks(func);
+            let mut new_blocks = Vec::new();
+            
+            for (i, block) in func.blocks.into_iter().enumerate() {
+                if reachable.contains(i) {
+                    new_blocks.push(block);
+                } else {
+                    self.removed_blocks += 1;
+                    changed = true;
+                }
+            }
+            func.blocks = new_blocks;
+            
+            // Phase 2: Simplify phi nodes
+            changed |= self.simplify_phi_nodes(func, &reachable);
+            
+            // Phase 3: Dead instruction elimination
+            // Note: In a real implementation, we would use the liveness analysis
+            // from the optimizer module. For now, we'll do a simplified version.
+            let live_out = BitSet::new(func.locals.len());
+            
+            for block in &mut func.blocks {
+                changed |= self.eliminate_dead_instructions(block, &live_out, &func.blocks);
+            }
+            
+            // Phase 4: Remove empty blocks
+            changed |= self.remove_empty_blocks(func);
+            
+            changed
+        }
+        
+        fn preserves_wcet(&self) -> bool {
+            true // Dead code elimination can only reduce execution time
+        }
+    }
+}

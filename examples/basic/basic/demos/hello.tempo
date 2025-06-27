@@ -1,0 +1,22 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// [T∞] Hello World en Tempo
+// Author: Ignacio Peña Sepúlveda  
+// Date: June 25, 2025
+
+fn main() -> i32 {
+    print_line("¡Hola desde Tempo!");
+    print_line("El lenguaje determinístico");
+    print_line("wcet [T∞] bound");
+    
+    return 0;
+}

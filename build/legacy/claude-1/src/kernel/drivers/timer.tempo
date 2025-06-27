@@ -1,0 +1,477 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS High-Precision Timer Driver
+// Implements system timer, scheduling quantum, and time management
+
+module kernel.drivers.timer
+
+import kernel.process.scheduler
+
+// Timer driver state
+struct TimerDriver {
+    // Hardware timer configuration
+    frequency: u32           // Timer frequency in Hz
+    period_ns: u64          // Period in nanoseconds
+    
+    // System time tracking
+    ticks: u64              // Total timer ticks since boot
+    uptime_ns: u64          // System uptime in nanoseconds
+    boot_time: u64          // Unix timestamp at boot
+    
+    // High-resolution timer
+    hpet_base: usize        // HPET base address
+    tsc_frequency: u64      // TSC frequency
+    use_hpet: bool          // Use HPET if available
+    use_tsc: bool           // Use TSC for high precision
+    
+    // Timer callbacks
+    callbacks: [MAX_CALLBACKS]TimerCallback
+    callback_count: u32
+    
+    // Statistics
+    interrupts: u64
+    missed_ticks: u64
+    
+    lock: SpinLock
+}
+
+// Timer callback
+struct TimerCallback {
+    function: fn(u64)       // Callback function
+    interval: u64           // Interval in nanoseconds
+    next_trigger: u64       // Next trigger time
+    periodic: bool          // One-shot or periodic
+    enabled: bool
+}
+
+// HPET registers
+struct HPET {
+    capabilities: u64       // General capabilities
+    configuration: u64      // General configuration
+    interrupt_status: u64   // General interrupt status
+    _reserved1: u64
+    main_counter: u64       // Main counter value
+    _reserved2: u64
+    timer0_config: u64      // Timer 0 configuration
+    timer0_comparator: u64  // Timer 0 comparator
+    timer0_fsb: u64        // Timer 0 FSB interrupt
+    _reserved3: u64
+    timer1_config: u64      // Timer 1 configuration
+    timer1_comparator: u64  // Timer 1 comparator
+    timer1_fsb: u64        // Timer 1 FSB interrupt
+}
+
+const MAX_CALLBACKS = 32
+const TIMER_IRQ = 0        // Timer interrupt vector
+const SCHEDULER_IRQ = 0x20 // Scheduler interrupt vector
+
+// PIT (Programmable Interval Timer) ports
+const PIT_CHANNEL0 = 0x40
+const PIT_CHANNEL1 = 0x41
+const PIT_CHANNEL2 = 0x42
+const PIT_COMMAND = 0x43
+const PIT_FREQUENCY = 1193182  // PIT base frequency
+
+// HPET constants
+const HPET_ENABLE = 1 << 0
+const HPET_LEG_RT_CNF = 1 << 1
+const HPET_TIMER_32BIT = 1 << 8
+const HPET_TIMER_PERIODIC = 1 << 3
+const HPET_TIMER_ENABLE = 1 << 2
+const HPET_TIMER_SETVAL = 1 << 6
+
+// Initialize timer driver
+@export
+fn init() -> *TimerDriver {
+    let timer = alloc(TimerDriver)
+    
+    timer.frequency = 1000  // Default 1000 Hz
+    timer.period_ns = 1000000  // 1ms
+    timer.ticks = 0
+    timer.uptime_ns = 0
+    timer.callback_count = 0
+    timer.lock = SpinLock{}
+    
+    // Detect and initialize hardware timers
+    detect_timers(timer)
+    
+    // Initialize primary timer
+    if timer.use_hpet {
+        init_hpet(timer)
+    } else {
+        init_pit(timer)
+    }
+    
+    // Calibrate TSC if available
+    if timer.use_tsc {
+        calibrate_tsc(timer)
+    }
+    
+    // Register interrupt handler
+    register_interrupt_handler(TIMER_IRQ, timer_interrupt_handler)
+    
+    // Register scheduler callback
+    register_callback(scheduler_tick, 1000000, true)  // 1ms scheduler quantum
+    
+    return timer
+}
+
+// Set timer frequency
+@export
+fn set_frequency(freq: u32) {
+    let timer = get_timer()
+    
+    timer.lock.acquire()
+    defer timer.lock.release()
+    
+    timer.frequency = freq
+    timer.period_ns = 1000000000 / freq
+    
+    // Reconfigure hardware timer
+    if timer.use_hpet {
+        configure_hpet_timer(timer, freq)
+    } else {
+        configure_pit_timer(timer, freq)
+    }
+}
+
+// Get system time in milliseconds
+@export
+fn get_system_time() -> u64 {
+    let timer = get_timer()
+    return timer.uptime_ns / 1000000
+}
+
+// Get high-precision time in nanoseconds
+@export
+fn get_time_ns() -> u64 {
+    let timer = get_timer()
+    
+    if timer.use_tsc {
+        return read_tsc() * 1000000000 / timer.tsc_frequency
+    } else if timer.use_hpet {
+        return read_hpet_counter(timer)
+    } else {
+        return timer.uptime_ns
+    }
+}
+
+// Get Unix timestamp
+@export
+fn get_unix_time() -> u64 {
+    let timer = get_timer()
+    return timer.boot_time + (timer.uptime_ns / 1000000000)
+}
+
+// Sleep for specified nanoseconds
+@export
+fn sleep_ns(ns: u64) {
+    let target = get_time_ns() + ns
+    
+    while get_time_ns() < target {
+        pause()  // CPU pause instruction
+    }
+}
+
+// Register timer callback
+@export
+fn register_callback(callback: fn(u64), interval_ns: u64, periodic: bool) -> u32 {
+    let timer = get_timer()
+    
+    timer.lock.acquire()
+    defer timer.lock.release()
+    
+    if timer.callback_count >= MAX_CALLBACKS {
+        return -1
+    }
+    
+    let id = timer.callback_count
+    timer.callbacks[id] = TimerCallback{
+        function: callback,
+        interval: interval_ns,
+        next_trigger: timer.uptime_ns + interval_ns,
+        periodic: periodic,
+        enabled: true
+    }
+    
+    timer.callback_count++
+    return id
+}
+
+// Unregister timer callback
+@export
+fn unregister_callback(id: u32) {
+    let timer = get_timer()
+    
+    timer.lock.acquire()
+    defer timer.lock.release()
+    
+    if id < timer.callback_count {
+        timer.callbacks[id].enabled = false
+    }
+}
+
+// Timer interrupt handler
+fn timer_interrupt_handler(frame: *InterruptFrame) {
+    let timer = get_timer()
+    
+    timer.interrupts++
+    timer.ticks++
+    timer.uptime_ns += timer.period_ns
+    
+    // Process callbacks
+    process_callbacks(timer)
+    
+    // Send EOI
+    send_eoi(TIMER_IRQ)
+}
+
+// Process timer callbacks
+fn process_callbacks(timer: *TimerDriver) {
+    for i in 0..timer.callback_count {
+        let callback = &timer.callbacks[i]
+        
+        if !callback.enabled {
+            continue
+        }
+        
+        if timer.uptime_ns >= callback.next_trigger {
+            // Call the callback
+            callback.function(timer.uptime_ns)
+            
+            if callback.periodic {
+                // Schedule next trigger
+                callback.next_trigger += callback.interval
+                
+                // Handle missed triggers
+                if callback.next_trigger < timer.uptime_ns {
+                    timer.missed_ticks++
+                    callback.next_trigger = timer.uptime_ns + callback.interval
+                }
+            } else {
+                // One-shot, disable it
+                callback.enabled = false
+            }
+        }
+    }
+}
+
+// Scheduler tick callback
+fn scheduler_tick(time_ns: u64) {
+    // Trigger scheduler
+    scheduler.schedule()
+}
+
+// Hardware timer detection
+fn detect_timers(timer: *TimerDriver) {
+    // Check for HPET
+    let hpet_addr = get_hpet_address()
+    if hpet_addr != 0 {
+        timer.hpet_base = hpet_addr
+        timer.use_hpet = true
+    }
+    
+    // Check for TSC
+    if cpu_has_tsc() {
+        timer.use_tsc = true
+    }
+}
+
+// Initialize HPET
+fn init_hpet(timer: *TimerDriver) {
+    let hpet = timer.hpet_base as *HPET
+    
+    // Enable HPET
+    hpet.configuration = HPET_ENABLE
+    
+    // Configure timer 0 for periodic interrupts
+    let period = 1000000000000 / timer.frequency  // Femtoseconds
+    hpet.timer0_comparator = period
+    hpet.timer0_config = HPET_TIMER_PERIODIC | HPET_TIMER_ENABLE | HPET_TIMER_SETVAL
+    
+    // Enable legacy replacement (routes to IRQ0)
+    hpet.configuration |= HPET_LEG_RT_CNF
+}
+
+// Initialize PIT
+fn init_pit(timer: *TimerDriver) {
+    // Calculate divisor
+    let divisor = PIT_FREQUENCY / timer.frequency
+    
+    // Configure PIT channel 0
+    outb(PIT_COMMAND, 0x36)  // Channel 0, square wave mode
+    outb(PIT_CHANNEL0, divisor & 0xFF)
+    outb(PIT_CHANNEL0, (divisor >> 8) & 0xFF)
+}
+
+// Configure HPET timer
+fn configure_hpet_timer(timer: *TimerDriver, freq: u32) {
+    let hpet = timer.hpet_base as *HPET
+    
+    // Disable timer
+    hpet.timer0_config &= ~HPET_TIMER_ENABLE
+    
+    // Set new period
+    let period = 1000000000000 / freq  // Femtoseconds
+    hpet.timer0_comparator = period
+    
+    // Re-enable timer
+    hpet.timer0_config |= HPET_TIMER_ENABLE | HPET_TIMER_SETVAL
+}
+
+// Configure PIT timer
+fn configure_pit_timer(timer: *TimerDriver, freq: u32) {
+    let divisor = PIT_FREQUENCY / freq
+    
+    outb(PIT_COMMAND, 0x36)
+    outb(PIT_CHANNEL0, divisor & 0xFF)
+    outb(PIT_CHANNEL0, (divisor >> 8) & 0xFF)
+}
+
+// Calibrate TSC
+fn calibrate_tsc(timer: *TimerDriver) {
+    // Use PIT to calibrate TSC
+    let start_tsc = read_tsc()
+    
+    // Wait for 100ms using PIT
+    pit_wait(100000)
+    
+    let end_tsc = read_tsc()
+    
+    // Calculate TSC frequency
+    timer.tsc_frequency = (end_tsc - start_tsc) * 10
+}
+
+// Wait using PIT
+fn pit_wait(us: u32) {
+    // Configure PIT channel 2 for one-shot
+    let divisor = (PIT_FREQUENCY * us) / 1000000
+    
+    outb(PIT_COMMAND, 0xB0)  // Channel 2, one-shot
+    outb(PIT_CHANNEL2, divisor & 0xFF)
+    outb(PIT_CHANNEL2, (divisor >> 8) & 0xFF)
+    
+    // Enable gate and wait
+    let gate = inb(0x61)
+    outb(0x61, gate | 0x01)
+    
+    // Poll until complete
+    while (inb(0x61) & 0x20) == 0 {
+        pause()
+    }
+    
+    // Restore gate
+    outb(0x61, gate)
+}
+
+// Read HPET counter
+fn read_hpet_counter(timer: *TimerDriver) -> u64 {
+    let hpet = timer.hpet_base as *HPET
+    return hpet.main_counter
+}
+
+// One-shot timer
+@export
+fn oneshot(callback: fn(u64), delay_ns: u64) -> u32 {
+    return register_callback(callback, delay_ns, false)
+}
+
+// Periodic timer
+@export
+fn periodic(callback: fn(u64), interval_ns: u64) -> u32 {
+    return register_callback(callback, interval_ns, true)
+}
+
+// High-resolution delay
+@export
+fn udelay(us: u32) {
+    sleep_ns(us * 1000)
+}
+
+@export
+fn mdelay(ms: u32) {
+    sleep_ns(ms * 1000000)
+}
+
+// Get timer statistics
+@export
+fn get_stats() -> TimerStats {
+    let timer = get_timer()
+    
+    return TimerStats{
+        frequency: timer.frequency,
+        ticks: timer.ticks,
+        uptime_ns: timer.uptime_ns,
+        interrupts: timer.interrupts,
+        missed_ticks: timer.missed_ticks,
+        use_hpet: timer.use_hpet,
+        use_tsc: timer.use_tsc
+    }
+}
+
+// Get timer instance
+fn get_timer() -> *TimerDriver {
+    return kernel.kernel_state.timer
+}
+
+// Architecture-specific functions
+@extern fn read_tsc() -> u64
+@extern fn pause()
+@extern fn cpu_has_tsc() -> bool
+@extern fn get_hpet_address() -> usize
+@extern fn register_interrupt_handler(irq: u8, handler: fn(*InterruptFrame))
+@extern fn send_eoi(irq: u8)
+@extern fn outb(port: u16, value: u8)
+@extern fn inb(port: u16) -> u8
+
+// Interrupt frame
+struct InterruptFrame {
+    // CPU registers at time of interrupt
+    rax: u64
+    rbx: u64
+    rcx: u64
+    rdx: u64
+    rsi: u64
+    rdi: u64
+    rbp: u64
+    rsp: u64
+    r8: u64
+    r9: u64
+    r10: u64
+    r11: u64
+    r12: u64
+    r13: u64
+    r14: u64
+    r15: u64
+    
+    // Interrupt info
+    int_no: u64
+    err_code: u64
+    
+    // CPU state
+    rip: u64
+    cs: u64
+    rflags: u64
+    user_rsp: u64
+    ss: u64
+}
+
+// Timer statistics
+struct TimerStats {
+    frequency: u32
+    ticks: u64
+    uptime_ns: u64
+    interrupts: u64
+    missed_ticks: u64
+    use_hpet: bool
+    use_tsc: bool
+}

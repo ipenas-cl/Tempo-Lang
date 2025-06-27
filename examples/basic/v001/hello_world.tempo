@@ -1,0 +1,6 @@
+// Simple Hello World for Tempo v0.0.1
+fn main() -> i32 {
+    print_line("Hello, World!");
+    print_line("Welcome to Tempo v0.0.1");
+    return 0;
+}

@@ -1,0 +1,728 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS CSP-style Channel Communication
+// Implements synchronous channels for inter-process communication
+
+module kernel.ipc.channels
+
+import kernel.process.process
+import kernel.process.scheduler
+
+// Channel system state
+struct ChannelSystem {
+    channels: [MAX_CHANNELS]*Channel
+    channel_count: u32
+    next_channel_id: u32
+    lock: SpinLock
+}
+
+// Channel structure
+struct Channel {
+    id: u32
+    name: string
+    capacity: usize              // 0 for synchronous, >0 for buffered
+    closed: bool
+    
+    // Message buffer (for buffered channels)
+    buffer: CircularBuffer
+    
+    // Waiting processes
+    senders: ProcessWaitQueue
+    receivers: ProcessWaitQueue
+    
+    // Statistics
+    messages_sent: u64
+    messages_received: u64
+    
+    // Access control
+    owner_pid: u32
+    permissions: ChannelPermissions
+    
+    lock: SpinLock
+}
+
+// Circular buffer for buffered channels
+struct CircularBuffer {
+    data: []u8
+    capacity: usize
+    size: usize
+    head: usize
+    tail: usize
+}
+
+// Process wait queue
+struct ProcessWaitQueue {
+    processes: []*Process
+    count: u32
+    capacity: usize
+}
+
+// Channel permissions
+struct ChannelPermissions {
+    mode: u16  // Unix-style permissions
+    allowed_pids: []u32
+}
+
+// Channel message
+struct Message {
+    sender_pid: u32
+    size: usize
+    data: []u8
+}
+
+const MAX_CHANNELS = 1024
+const MAX_MESSAGE_SIZE = 65536  // 64KB
+const DEFAULT_QUEUE_CAPACITY = 32
+
+// Initialize channel system
+@export
+fn init() -> *ChannelSystem {
+    let sys = alloc(ChannelSystem)
+    
+    sys.channel_count = 0
+    sys.next_channel_id = 1
+    sys.lock = SpinLock{}
+    
+    for i in 0..MAX_CHANNELS {
+        sys.channels[i] = null
+    }
+    
+    return sys
+}
+
+// Create a new channel
+@export
+fn create(name: string, capacity: usize) -> u32 {
+    let sys = get_channel_system()
+    
+    sys.lock.acquire()
+    defer sys.lock.release()
+    
+    // Find free slot
+    let slot = find_free_slot(sys)
+    if slot == -1 {
+        return 0  // No free channels
+    }
+    
+    // Allocate channel
+    let chan = alloc(Channel)
+    chan.id = sys.next_channel_id++
+    chan.name = name
+    chan.capacity = capacity
+    chan.closed = false
+    chan.owner_pid = process.get_current_pid()
+    chan.lock = SpinLock{}
+    
+    // Initialize buffer for buffered channels
+    if capacity > 0 {
+        chan.buffer = CircularBuffer{
+            data: alloc([]u8, capacity),
+            capacity: capacity,
+            size: 0,
+            head: 0,
+            tail: 0
+        }
+    }
+    
+    // Initialize wait queues
+    chan.senders = ProcessWaitQueue{
+        processes: alloc([]*Process, DEFAULT_QUEUE_CAPACITY),
+        count: 0,
+        capacity: DEFAULT_QUEUE_CAPACITY
+    }
+    
+    chan.receivers = ProcessWaitQueue{
+        processes: alloc([]*Process, DEFAULT_QUEUE_CAPACITY),
+        count: 0,
+        capacity: DEFAULT_QUEUE_CAPACITY
+    }
+    
+    // Set default permissions
+    chan.permissions.mode = 0o600  // Owner read/write only
+    
+    sys.channels[slot] = chan
+    sys.channel_count++
+    
+    return chan.id
+}
+
+// Open existing channel
+@export
+fn open(name: string) -> u32 {
+    let sys = get_channel_system()
+    
+    sys.lock.acquire()
+    defer sys.lock.release()
+    
+    // Find channel by name
+    for i in 0..MAX_CHANNELS {
+        let chan = sys.channels[i]
+        if chan != null && chan.name == name {
+            // Check permissions
+            if !has_permission(chan, process.get_current_pid(), false) {
+                return 0
+            }
+            
+            return chan.id
+        }
+    }
+    
+    return 0  // Channel not found
+}
+
+// Send message to channel
+@export
+fn send(channel_id: u32, data: []u8, size: usize) -> i32 {
+    let chan = get_channel(channel_id)
+    if chan == null {
+        return -1  // Invalid channel
+    }
+    
+    if chan.closed {
+        return -2  // Channel closed
+    }
+    
+    if size > MAX_MESSAGE_SIZE {
+        return -3  // Message too large
+    }
+    
+    chan.lock.acquire()
+    defer chan.lock.release()
+    
+    // Check permissions
+    if !has_permission(chan, process.get_current_pid(), true) {
+        return -4  // Permission denied
+    }
+    
+    if chan.capacity == 0 {
+        // Synchronous channel
+        return send_sync(chan, data, size)
+    } else {
+        // Buffered channel
+        return send_buffered(chan, data, size)
+    }
+}
+
+// Receive message from channel
+@export
+fn receive(channel_id: u32, buffer: []u8, buffer_size: usize) -> i32 {
+    let chan = get_channel(channel_id)
+    if chan == null {
+        return -1  // Invalid channel
+    }
+    
+    chan.lock.acquire()
+    defer chan.lock.release()
+    
+    // Check permissions
+    if !has_permission(chan, process.get_current_pid(), false) {
+        return -4  // Permission denied
+    }
+    
+    if chan.capacity == 0 {
+        // Synchronous channel
+        return receive_sync(chan, buffer, buffer_size)
+    } else {
+        // Buffered channel
+        return receive_buffered(chan, buffer, buffer_size)
+    }
+}
+
+// Try to send without blocking
+@export
+fn try_send(channel_id: u32, data: []u8, size: usize) -> i32 {
+    let chan = get_channel(channel_id)
+    if chan == null {
+        return -1
+    }
+    
+    if chan.closed {
+        return -2
+    }
+    
+    chan.lock.acquire()
+    defer chan.lock.release()
+    
+    if chan.capacity == 0 {
+        // Synchronous channel - check if receiver waiting
+        if chan.receivers.count == 0 {
+            return -5  // Would block
+        }
+        return send_sync(chan, data, size)
+    } else {
+        // Buffered channel - check if space available
+        if chan.buffer.size + size > chan.buffer.capacity {
+            return -5  // Would block
+        }
+        return send_buffered(chan, data, size)
+    }
+}
+
+// Try to receive without blocking
+@export
+fn try_receive(channel_id: u32, buffer: []u8, buffer_size: usize) -> i32 {
+    let chan = get_channel(channel_id)
+    if chan == null {
+        return -1
+    }
+    
+    chan.lock.acquire()
+    defer chan.lock.release()
+    
+    if chan.capacity == 0 {
+        // Synchronous channel - check if sender waiting
+        if chan.senders.count == 0 {
+            if chan.closed {
+                return -2  // Channel closed
+            }
+            return -5  // Would block
+        }
+        return receive_sync(chan, buffer, buffer_size)
+    } else {
+        // Buffered channel - check if data available
+        if chan.buffer.size == 0 {
+            if chan.closed {
+                return -2  // Channel closed
+            }
+            return -5  // Would block
+        }
+        return receive_buffered(chan, buffer, buffer_size)
+    }
+}
+
+// Select on multiple channels
+@export
+fn select(channels: []SelectCase, timeout_ms: i32) -> i32 {
+    let start_time = timer.get_system_time()
+    
+    loop {
+        // Try all channels
+        for i in 0..channels.len {
+            let case = &channels[i]
+            
+            match case.op {
+                SelectOp.Send -> {
+                    let result = try_send(case.channel_id, case.data, case.size)
+                    if result >= 0 || result == -2 {  // Success or closed
+                        return i
+                    }
+                }
+                SelectOp.Receive -> {
+                    let result = try_receive(case.channel_id, case.buffer, case.buffer_size)
+                    if result >= 0 || result == -2 {  // Success or closed
+                        case.received_size = result
+                        return i
+                    }
+                }
+            }
+        }
+        
+        // Check timeout
+        if timeout_ms >= 0 {
+            let elapsed = timer.get_system_time() - start_time
+            if elapsed >= timeout_ms {
+                return -1  // Timeout
+            }
+        }
+        
+        // Yield and retry
+        process.yield()
+    }
+}
+
+// Close channel
+@export
+fn close(channel_id: u32) {
+    let chan = get_channel(channel_id)
+    if chan == null {
+        return
+    }
+    
+    chan.lock.acquire()
+    defer chan.lock.release()
+    
+    // Only owner can close
+    if chan.owner_pid != process.get_current_pid() {
+        return
+    }
+    
+    chan.closed = true
+    
+    // Wake all waiting processes
+    wake_all_waiters(chan)
+}
+
+// Destroy channel
+@export
+fn destroy(channel_id: u32) {
+    let sys = get_channel_system()
+    
+    sys.lock.acquire()
+    defer sys.lock.release()
+    
+    let chan = get_channel_nolock(channel_id)
+    if chan == null {
+        return
+    }
+    
+    // Only owner can destroy
+    if chan.owner_pid != process.get_current_pid() {
+        return
+    }
+    
+    // Close first
+    chan.closed = true
+    wake_all_waiters(chan)
+    
+    // Find and remove from system
+    for i in 0..MAX_CHANNELS {
+        if sys.channels[i] == chan {
+            sys.channels[i] = null
+            sys.channel_count--
+            break
+        }
+    }
+    
+    // Free resources
+    if chan.capacity > 0 {
+        free(chan.buffer.data)
+    }
+    free(chan.senders.processes)
+    free(chan.receivers.processes)
+    free(chan)
+}
+
+// Implementation functions
+
+fn send_sync(chan: *Channel, data: []u8, size: usize) -> i32 {
+    // Check if receiver is waiting
+    if chan.receivers.count > 0 {
+        // Direct transfer to receiver
+        let receiver = dequeue_waiter(&chan.receivers)
+        
+        // Copy data directly to receiver's buffer
+        let copy_size = min(size, receiver.message_buffer_size)
+        memcpy(receiver.message_buffer, data, copy_size)
+        receiver.message_size = copy_size
+        
+        // Wake receiver
+        receiver.state = ProcessState.Ready
+        scheduler.unblock_process(receiver.pid)
+        
+        chan.messages_sent++
+        chan.messages_received++
+        
+        return copy_size
+    }
+    
+    // No receiver, block sender
+    let current = process.get_current_process()
+    current.message_buffer = data
+    current.message_size = size
+    
+    enqueue_waiter(&chan.senders, current)
+    
+    // Block until receiver arrives or channel closes
+    current.state = ProcessState.Blocked
+    process.yield()
+    
+    // Check if woken by close
+    if chan.closed {
+        return -2
+    }
+    
+    return current.message_transfer_size
+}
+
+fn receive_sync(chan: *Channel, buffer: []u8, buffer_size: usize) -> i32 {
+    // Check if sender is waiting
+    if chan.senders.count > 0 {
+        // Direct transfer from sender
+        let sender = dequeue_waiter(&chan.senders)
+        
+        // Copy data from sender's buffer
+        let copy_size = min(sender.message_size, buffer_size)
+        memcpy(buffer, sender.message_buffer, copy_size)
+        
+        // Notify sender of transfer size
+        sender.message_transfer_size = copy_size
+        
+        // Wake sender
+        sender.state = ProcessState.Ready
+        scheduler.unblock_process(sender.pid)
+        
+        chan.messages_sent++
+        chan.messages_received++
+        
+        return copy_size
+    }
+    
+    // Check if channel is closed
+    if chan.closed {
+        return -2
+    }
+    
+    // No sender, block receiver
+    let current = process.get_current_process()
+    current.message_buffer = buffer
+    current.message_buffer_size = buffer_size
+    
+    enqueue_waiter(&chan.receivers, current)
+    
+    // Block until sender arrives or channel closes
+    current.state = ProcessState.Blocked
+    process.yield()
+    
+    // Check if woken by close
+    if chan.closed {
+        return -2
+    }
+    
+    return current.message_size
+}
+
+fn send_buffered(chan: *Channel, data: []u8, size: usize) -> i32 {
+    // Check if buffer has space
+    if chan.buffer.size + size > chan.buffer.capacity {
+        // Buffer full, block sender
+        let current = process.get_current_process()
+        current.message_buffer = data
+        current.message_size = size
+        
+        enqueue_waiter(&chan.senders, current)
+        
+        current.state = ProcessState.Blocked
+        process.yield()
+        
+        if chan.closed {
+            return -2
+        }
+        
+        return current.message_transfer_size
+    }
+    
+    // Add to buffer
+    buffer_write(&chan.buffer, data, size)
+    chan.messages_sent++
+    
+    // Wake a receiver if any
+    if chan.receivers.count > 0 {
+        let receiver = dequeue_waiter(&chan.receivers)
+        receiver.state = ProcessState.Ready
+        scheduler.unblock_process(receiver.pid)
+    }
+    
+    return size
+}
+
+fn receive_buffered(chan: *Channel, buffer: []u8, buffer_size: usize) -> i32 {
+    // Check if buffer has data
+    if chan.buffer.size == 0 {
+        // Buffer empty, check if closed
+        if chan.closed {
+            return -2
+        }
+        
+        // Block receiver
+        let current = process.get_current_process()
+        current.message_buffer = buffer
+        current.message_buffer_size = buffer_size
+        
+        enqueue_waiter(&chan.receivers, current)
+        
+        current.state = ProcessState.Blocked
+        process.yield()
+        
+        if chan.closed && chan.buffer.size == 0 {
+            return -2
+        }
+    }
+    
+    // Read from buffer
+    let size = buffer_read(&chan.buffer, buffer, buffer_size)
+    chan.messages_received++
+    
+    // Wake a sender if any
+    if chan.senders.count > 0 {
+        let sender = dequeue_waiter(&chan.senders)
+        
+        // Try to add sender's data to buffer
+        if chan.buffer.size + sender.message_size <= chan.buffer.capacity {
+            buffer_write(&chan.buffer, sender.message_buffer, sender.message_size)
+            sender.message_transfer_size = sender.message_size
+        }
+        
+        sender.state = ProcessState.Ready
+        scheduler.unblock_process(sender.pid)
+    }
+    
+    return size
+}
+
+// Buffer operations
+fn buffer_write(buf: *CircularBuffer, data: []u8, size: usize) {
+    for i in 0..size {
+        buf.data[buf.tail] = data[i]
+        buf.tail = (buf.tail + 1) % buf.capacity
+    }
+    buf.size += size
+}
+
+fn buffer_read(buf: *CircularBuffer, data: []u8, max_size: usize) -> usize {
+    let read_size = min(buf.size, max_size)
+    
+    for i in 0..read_size {
+        data[i] = buf.data[buf.head]
+        buf.head = (buf.head + 1) % buf.capacity
+    }
+    buf.size -= read_size
+    
+    return read_size
+}
+
+// Wait queue operations
+fn enqueue_waiter(queue: *ProcessWaitQueue, proc: *Process) {
+    if queue.count >= queue.capacity {
+        // Expand queue
+        let new_capacity = queue.capacity * 2
+        let new_processes = alloc([]*Process, new_capacity)
+        memcpy(new_processes, queue.processes, queue.count * sizeof(*Process))
+        free(queue.processes)
+        queue.processes = new_processes
+        queue.capacity = new_capacity
+    }
+    
+    queue.processes[queue.count] = proc
+    queue.count++
+}
+
+fn dequeue_waiter(queue: *ProcessWaitQueue) -> *Process {
+    if queue.count == 0 {
+        return null
+    }
+    
+    let proc = queue.processes[0]
+    
+    // Shift remaining processes
+    for i in 1..queue.count {
+        queue.processes[i-1] = queue.processes[i]
+    }
+    queue.count--
+    
+    return proc
+}
+
+fn wake_all_waiters(chan: *Channel) {
+    // Wake all senders
+    while chan.senders.count > 0 {
+        let sender = dequeue_waiter(&chan.senders)
+        sender.state = ProcessState.Ready
+        scheduler.unblock_process(sender.pid)
+    }
+    
+    // Wake all receivers
+    while chan.receivers.count > 0 {
+        let receiver = dequeue_waiter(&chan.receivers)
+        receiver.state = ProcessState.Ready
+        scheduler.unblock_process(receiver.pid)
+    }
+}
+
+// Permission checking
+fn has_permission(chan: *Channel, pid: u32, write: bool) -> bool {
+    // Owner always has permission
+    if pid == chan.owner_pid {
+        return true
+    }
+    
+    // Check allowed PIDs list
+    for allowed_pid in chan.permissions.allowed_pids {
+        if allowed_pid == pid {
+            return true
+        }
+    }
+    
+    // Check mode bits (simplified)
+    if write {
+        return (chan.permissions.mode & 0o200) != 0  // Write permission
+    } else {
+        return (chan.permissions.mode & 0o400) != 0  // Read permission
+    }
+}
+
+// Helper functions
+fn get_channel_system() -> *ChannelSystem {
+    return kernel.kernel_state.channel_system
+}
+
+fn get_channel(id: u32) -> *Channel {
+    let sys = get_channel_system()
+    
+    sys.lock.acquire()
+    defer sys.lock.release()
+    
+    return get_channel_nolock(id)
+}
+
+fn get_channel_nolock(id: u32) -> *Channel {
+    let sys = get_channel_system()
+    
+    for i in 0..MAX_CHANNELS {
+        let chan = sys.channels[i]
+        if chan != null && chan.id == id {
+            return chan
+        }
+    }
+    
+    return null
+}
+
+fn find_free_slot(sys: *ChannelSystem) -> i32 {
+    for i in 0..MAX_CHANNELS {
+        if sys.channels[i] == null {
+            return i
+        }
+    }
+    return -1
+}
+
+fn min(a: usize, b: usize) -> usize {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+// Select case structure
+struct SelectCase {
+    op: SelectOp
+    channel_id: u32
+    data: []u8
+    size: usize
+    buffer: []u8
+    buffer_size: usize
+    received_size: i32
+}
+
+enum SelectOp {
+    Send
+    Receive
+}
+
+// Extend Process struct with message passing fields
+@extend(Process)
+struct Process {
+    message_buffer: []u8
+    message_size: usize
+    message_buffer_size: usize
+    message_transfer_size: i32
+}

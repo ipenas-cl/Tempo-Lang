@@ -1,0 +1,359 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// TempoCore Pipeline Implementation
+// In-order, non-speculative pipeline for deterministic execution
+
+module tempcore_pipeline {
+    import tempcore_isa::*;
+    
+    // Pipeline Stages (5-stage classic RISC)
+    enum PipelineStage {
+        IF,  // Instruction Fetch
+        ID,  // Instruction Decode
+        EX,  // Execute
+        MEM, // Memory Access
+        WB,  // Write Back
+    }
+    
+    // Pipeline Register
+    struct PipelineRegister {
+        valid: bool,
+        instruction: Instruction,
+        pc: u64,
+        opcode: InstructionClass,
+        rs1_value: u64,
+        rs2_value: u64,
+        imm_value: u64,
+        alu_result: u64,
+        mem_data: u64,
+        destination: u5,
+        exception: Exception,
+        cycle_start: u64,
+    }
+    
+    // Pipeline State
+    struct Pipeline {
+        // Pipeline registers between stages
+        if_id: PipelineRegister,
+        id_ex: PipelineRegister,
+        ex_mem: PipelineRegister,
+        mem_wb: PipelineRegister,
+        
+        // Control signals
+        stall: bool,
+        flush: bool,
+        
+        // Forwarding detection (deterministic)
+        forward_ex_rs1: bool,
+        forward_ex_rs2: bool,
+        forward_mem_rs1: bool,
+        forward_mem_rs2: bool,
+        
+        // Performance counters
+        total_cycles: u64,
+        instruction_count: u64,
+        stall_cycles: u64,
+    }
+    
+    // Initialize pipeline
+    fn init_pipeline() -> Pipeline {
+        Pipeline {
+            if_id: PipelineRegister { valid: false, ..default() },
+            id_ex: PipelineRegister { valid: false, ..default() },
+            ex_mem: PipelineRegister { valid: false, ..default() },
+            mem_wb: PipelineRegister { valid: false, ..default() },
+            stall: false,
+            flush: false,
+            forward_ex_rs1: false,
+            forward_ex_rs2: false,
+            forward_mem_rs1: false,
+            forward_mem_rs2: false,
+            total_cycles: 0,
+            instruction_count: 0,
+            stall_cycles: 0,
+        }
+    }
+    
+    // Instruction Fetch Stage
+    fn stage_fetch(pipeline: &mut Pipeline, state: &mut ProcessorState, 
+                   memory: &Memory) -> PipelineRegister {
+        let mut reg = PipelineRegister::default();
+        
+        if !pipeline.stall && !pipeline.flush {
+            // Fetch instruction from memory (always 2 cycles)
+            let instruction_word = memory.read_instruction(state.pc);
+            reg.instruction = decode(instruction_word);
+            reg.pc = state.pc;
+            reg.valid = true;
+            reg.cycle_start = state.cycle_count;
+            
+            // Update PC (no branch prediction)
+            state.pc += 4;
+        }
+        
+        reg
+    }
+    
+    // Instruction Decode Stage
+    fn stage_decode(pipeline: &mut Pipeline, state: &ProcessorState, 
+                    input: PipelineRegister) -> PipelineRegister {
+        let mut reg = input;
+        
+        if reg.valid && !pipeline.flush {
+            // Decode opcode
+            reg.opcode = input.instruction.opcode as InstructionClass;
+            
+            // Read register values
+            reg.rs1_value = state.registers[input.instruction.rs1 as usize];
+            reg.rs2_value = state.registers[input.instruction.rs2 as usize];
+            
+            // Sign-extend immediate
+            reg.imm_value = sign_extend(input.instruction.imm, 6);
+            
+            // Hazard detection (deterministic)
+            let hazard = detect_hazard(pipeline, &input.instruction);
+            if hazard {
+                pipeline.stall = true;
+                reg.valid = false;  // Insert bubble
+            }
+            
+            // Setup forwarding paths
+            setup_forwarding(pipeline, &input.instruction);
+        }
+        
+        reg
+    }
+    
+    // Execute Stage
+    fn stage_execute(pipeline: &mut Pipeline, input: PipelineRegister) -> PipelineRegister {
+        let mut reg = input;
+        
+        if reg.valid {
+            // Apply forwarding if needed
+            let op1 = if pipeline.forward_ex_rs1 {
+                pipeline.ex_mem.alu_result
+            } else if pipeline.forward_mem_rs1 {
+                pipeline.mem_wb.alu_result
+            } else {
+                reg.rs1_value
+            };
+            
+            let op2 = if pipeline.forward_ex_rs2 {
+                pipeline.ex_mem.alu_result
+            } else if pipeline.forward_mem_rs2 {
+                pipeline.mem_wb.alu_result
+            } else {
+                reg.rs2_value
+            };
+            
+            // Execute ALU operation
+            reg.alu_result = execute_alu(reg.opcode, op1, op2, reg.imm_value);
+            
+            // Check for branches (no prediction, always 2 cycles)
+            if is_branch(reg.opcode) {
+                let branch_taken = evaluate_branch(reg.opcode, op1, op2);
+                if branch_taken {
+                    pipeline.flush = true;  // Flush pipeline
+                    reg.alu_result = reg.pc + reg.imm_value;
+                }
+            }
+            
+            // Timing checks
+            if reg.opcode == InstructionClass::CHECK_TIME {
+                reg.exception = check_deadline(pipeline.total_cycles);
+            }
+        }
+        
+        reg
+    }
+    
+    // Memory Stage
+    fn stage_memory(pipeline: &mut Pipeline, state: &mut ProcessorState,
+                    memory: &mut Memory, input: PipelineRegister) -> PipelineRegister {
+        let mut reg = input;
+        
+        if reg.valid {
+            match reg.opcode {
+                InstructionClass::LD | InstructionClass::LDX => {
+                    // Load from memory (2 cycle latency)
+                    reg.mem_data = memory.read_data(reg.alu_result);
+                },
+                InstructionClass::ST | InstructionClass::STX => {
+                    // Store to memory (2 cycle latency)
+                    memory.write_data(reg.alu_result, reg.rs2_value);
+                },
+                InstructionClass::LDSP => {
+                    // Load from scratchpad (1 cycle)
+                    reg.mem_data = memory.read_scratchpad(reg.alu_result);
+                },
+                InstructionClass::STSP => {
+                    // Store to scratchpad (1 cycle)
+                    memory.write_scratchpad(reg.alu_result, reg.rs2_value);
+                },
+                _ => {}
+            }
+        }
+        
+        reg
+    }
+    
+    // Write Back Stage
+    fn stage_writeback(pipeline: &mut Pipeline, state: &mut ProcessorState,
+                       input: PipelineRegister) {
+        if input.valid && input.destination != 0 {  // r0 is always zero
+            let value = match input.opcode {
+                InstructionClass::LD | InstructionClass::LDX | InstructionClass::LDSP => {
+                    input.mem_data
+                },
+                _ => input.alu_result
+            };
+            
+            state.registers[input.destination as usize] = value;
+            pipeline.instruction_count += 1;
+        }
+    }
+    
+    // Pipeline Advance (single cycle)
+    fn advance_pipeline(pipeline: &mut Pipeline, state: &mut ProcessorState,
+                       memory: &mut Memory) {
+        // Increment cycle counter
+        pipeline.total_cycles += 1;
+        state.cycle_count += 1;
+        
+        // Stage 5: Write Back
+        stage_writeback(pipeline, state, pipeline.mem_wb);
+        
+        // Stage 4: Memory
+        pipeline.mem_wb = stage_memory(pipeline, state, memory, pipeline.ex_mem);
+        
+        // Stage 3: Execute
+        pipeline.ex_mem = stage_execute(pipeline, pipeline.id_ex);
+        
+        // Stage 2: Decode
+        pipeline.id_ex = stage_decode(pipeline, state, pipeline.if_id);
+        
+        // Stage 1: Fetch
+        pipeline.if_id = stage_fetch(pipeline, state, memory);
+        
+        // Clear control signals
+        if pipeline.flush {
+            // Flush pipeline on branch
+            pipeline.if_id.valid = false;
+            pipeline.id_ex.valid = false;
+            pipeline.flush = false;
+        }
+        
+        if pipeline.stall {
+            pipeline.stall_cycles += 1;
+            pipeline.stall = false;
+        }
+    }
+    
+    // Hazard Detection (RAW hazards only, no speculation)
+    fn detect_hazard(pipeline: &Pipeline, inst: &Instruction) -> bool {
+        // Check for Read-After-Write hazards
+        let rs1_hazard = inst.rs1 != 0 && (
+            (pipeline.id_ex.valid && pipeline.id_ex.destination == inst.rs1) ||
+            (pipeline.ex_mem.valid && pipeline.ex_mem.destination == inst.rs1 &&
+             is_load(pipeline.ex_mem.opcode))
+        );
+        
+        let rs2_hazard = inst.rs2 != 0 && (
+            (pipeline.id_ex.valid && pipeline.id_ex.destination == inst.rs2) ||
+            (pipeline.ex_mem.valid && pipeline.ex_mem.destination == inst.rs2 &&
+             is_load(pipeline.ex_mem.opcode))
+        );
+        
+        rs1_hazard || rs2_hazard
+    }
+    
+    // Setup Forwarding Paths
+    fn setup_forwarding(pipeline: &mut Pipeline, inst: &Instruction) {
+        // Forward from EX stage
+        pipeline.forward_ex_rs1 = inst.rs1 != 0 && 
+            pipeline.ex_mem.valid && 
+            pipeline.ex_mem.destination == inst.rs1 &&
+            !is_load(pipeline.ex_mem.opcode);
+            
+        pipeline.forward_ex_rs2 = inst.rs2 != 0 && 
+            pipeline.ex_mem.valid && 
+            pipeline.ex_mem.destination == inst.rs2 &&
+            !is_load(pipeline.ex_mem.opcode);
+        
+        // Forward from MEM stage
+        pipeline.forward_mem_rs1 = inst.rs1 != 0 && 
+            pipeline.mem_wb.valid && 
+            pipeline.mem_wb.destination == inst.rs1;
+            
+        pipeline.forward_mem_rs2 = inst.rs2 != 0 && 
+            pipeline.mem_wb.valid && 
+            pipeline.mem_wb.destination == inst.rs2;
+    }
+    
+    // ALU Operations
+    fn execute_alu(op: InstructionClass, rs1: u64, rs2: u64, imm: u64) -> u64 {
+        match op {
+            InstructionClass::ADD => rs1 + rs2,
+            InstructionClass::SUB => rs1 - rs2,
+            InstructionClass::AND => rs1 & rs2,
+            InstructionClass::OR => rs1 | rs2,
+            InstructionClass::XOR => rs1 ^ rs2,
+            InstructionClass::SHL => rs1 << (rs2 & 0x3F),
+            InstructionClass::SHR => rs1 >> (rs2 & 0x3F),
+            InstructionClass::NOT => !rs1,
+            InstructionClass::ADDI => rs1 + imm,
+            InstructionClass::SUBI => rs1 - imm,
+            InstructionClass::ANDI => rs1 & imm,
+            InstructionClass::ORI => rs1 | imm,
+            InstructionClass::XORI => rs1 ^ imm,
+            InstructionClass::LDI => imm,
+            _ => rs1 + imm,  // Default for address calculation
+        }
+    }
+    
+    // Branch Evaluation
+    fn evaluate_branch(op: InstructionClass, rs1: u64, rs2: u64) -> bool {
+        match op {
+            InstructionClass::BEQ => rs1 == rs2,
+            InstructionClass::BNE => rs1 != rs2,
+            InstructionClass::BLT => (rs1 as i64) < (rs2 as i64),
+            InstructionClass::BGE => (rs1 as i64) >= (rs2 as i64),
+            _ => false,
+        }
+    }
+    
+    // Helper functions
+    fn is_branch(op: InstructionClass) -> bool {
+        matches!(op, InstructionClass::BEQ | InstructionClass::BNE | 
+                     InstructionClass::BLT | InstructionClass::BGE |
+                     InstructionClass::JMP | InstructionClass::JMPI)
+    }
+    
+    fn is_load(op: InstructionClass) -> bool {
+        matches!(op, InstructionClass::LD | InstructionClass::LDX | 
+                     InstructionClass::LDSP)
+    }
+    
+    fn sign_extend(value: u64, bits: u32) -> u64 {
+        let sign_bit = 1 << (bits - 1);
+        if value & sign_bit != 0 {
+            value | (u64::MAX << bits)
+        } else {
+            value
+        }
+    }
+    
+    fn check_deadline(current_cycle: u64) -> Exception {
+        // This would check against the deadline register
+        Exception::None
+    }
+}

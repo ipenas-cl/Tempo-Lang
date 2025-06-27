@@ -1,0 +1,544 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// DOOM Software Renderer - Deterministic with bounded frame time
+
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+const SCREEN_WIDTH: u32 = 320;
+const SCREEN_HEIGHT: u32 = 200;
+const FOV: f32 = 90.0;
+const HALF_FOV: f32 = 45.0;
+
+struct Renderer {
+    framebuffer: Vec<u32>,
+    depth_buffer: Vec<f32>,
+    
+    // Texture cache
+    wall_textures: Vec<Texture>,
+    flat_textures: Vec<Texture>,
+    sprite_frames: Vec<SpriteFrame>,
+    
+    // Lookup tables for performance
+    sin_table: [i32; 8192],
+    tan_table: [i32; 4096],
+    view_angle_table: [i32; SCREEN_WIDTH as usize],
+    
+    // Visplane tracking
+    visplanes: Vec<Visplane>,
+    open_heights: Vec<(i32, i32)>,
+    
+    // Sprite sorting
+    visible_sprites: Vec<VisibleSprite>,
+}
+
+struct Texture {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    column_offsets: Vec<u32>,
+}
+
+struct SpriteFrame {
+    width: u32,
+    height: u32,
+    left_offset: i32,
+    top_offset: i32,
+    pixels: Vec<u8>,
+}
+
+struct Visplane {
+    height: i32,
+    texture_id: u32,
+    light_level: u8,
+    min_x: i32,
+    max_x: i32,
+    top: [i32; SCREEN_WIDTH as usize],
+    bottom: [i32; SCREEN_WIDTH as usize],
+}
+
+struct VisibleSprite {
+    x: f32,
+    y: f32,
+    z: f32,
+    texture_id: u32,
+    scale: f32,
+    light_level: u8,
+}
+
+impl Renderer {
+    fn new() -> Renderer {
+        let mut renderer = Renderer {
+            framebuffer: vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT) as usize],
+            depth_buffer: vec![f32::INFINITY; SCREEN_WIDTH as usize],
+            wall_textures: Vec::new(),
+            flat_textures: Vec::new(),
+            sprite_frames: Vec::new(),
+            sin_table: [0; 8192],
+            tan_table: [0; 4096],
+            view_angle_table: [0; SCREEN_WIDTH as usize],
+            visplanes: Vec::new(),
+            open_heights: vec![(0, SCREEN_HEIGHT as i32); SCREEN_WIDTH as usize],
+            visible_sprites: Vec::new(),
+        };
+        
+        // Initialize lookup tables
+        renderer.init_tables();
+        renderer
+    }
+    
+    fn init(&mut self, wad: &WadLoader) {
+        // Load all textures
+        self.load_wall_textures(wad);
+        self.load_flat_textures(wad);
+        self.load_sprites(wad);
+    }
+    
+    fn init_tables(&mut self) {
+        // Precalculate sin/cos tables for fixed-point math
+        for i in 0..8192 {
+            let angle = (i as f32) * 2.0 * std::f32::consts::PI / 8192.0;
+            self.sin_table[i] = (angle.sin() * 65536.0) as i32;
+        }
+        
+        // Tan table for perspective projection
+        for i in 0..4096 {
+            let angle = ((i as f32) - 2048.0) * FOV / 4096.0 * std::f32::consts::PI / 180.0;
+            self.tan_table[i] = (angle.tan() * 65536.0) as i32;
+        }
+        
+        // View angle for each screen column
+        for x in 0..SCREEN_WIDTH {
+            let screen_x = (x as f32) - (SCREEN_WIDTH as f32) / 2.0;
+            let angle = (screen_x / (SCREEN_WIDTH as f32) * FOV).atan() * 180.0 / std::f32::consts::PI;
+            self.view_angle_table[x as usize] = (angle * 182.044) as i32; // BAM units
+        }
+    }
+    
+    fn begin_frame(&mut self) {
+        // Clear buffers
+        self.framebuffer.fill(0);
+        self.depth_buffer.fill(f32::INFINITY);
+        self.visplanes.clear();
+        self.visible_sprites.clear();
+        
+        // Reset open heights
+        for i in 0..SCREEN_WIDTH as usize {
+            self.open_heights[i] = (0, SCREEN_HEIGHT as i32);
+        }
+    }
+    
+    fn render_3d_view(&mut self, view: &ViewState, map: &MapData) {
+        // Setup view transformation
+        let view_x = view.x;
+        let view_y = view.y;
+        let view_z = view.z;
+        let view_angle = view.angle;
+        
+        // Render BSP tree
+        self.render_bsp_node(map.nodes.len() - 1, map, view_x, view_y, view_angle);
+        
+        // Sort and render sprites
+        self.sort_sprites();
+        for sprite in &self.visible_sprites {
+            self.render_sprite(sprite, view);
+        }
+    }
+    
+    fn render_bsp_node(&mut self, node_id: usize, map: &MapData, view_x: f32, view_y: f32, view_angle: i32) {
+        if node_id & 0x8000 != 0 {
+            // Subsector
+            let subsector_id = node_id & 0x7FFF;
+            self.render_subsector(subsector_id, map, view_x, view_y, view_angle);
+            return;
+        }
+        
+        let node = &map.nodes[node_id];
+        
+        // Determine which side of the node the viewer is on
+        let dx = view_x - node.x;
+        let dy = view_y - node.y;
+        let side = if dx * node.dy - dy * node.dx > 0.0 { 0 } else { 1 };
+        
+        // Render front side first
+        self.render_bsp_node(node.children[side], map, view_x, view_y, view_angle);
+        
+        // Then back side
+        self.render_bsp_node(node.children[1 - side], map, view_x, view_y, view_angle);
+    }
+    
+    fn render_subsector(&mut self, subsector_id: usize, map: &MapData, view_x: f32, view_y: f32, view_angle: i32) {
+        let subsector = &map.subsectors[subsector_id];
+        
+        // Add sprites in this subsector to visible list
+        for thing in &subsector.things {
+            if thing.sprite_id != 0 {
+                self.visible_sprites.push(VisibleSprite {
+                    x: thing.x,
+                    y: thing.y,
+                    z: thing.z,
+                    texture_id: thing.sprite_id,
+                    scale: 1.0,
+                    light_level: subsector.sector.light_level,
+                });
+            }
+        }
+        
+        // Render walls
+        for seg_id in subsector.first_seg..subsector.first_seg + subsector.seg_count {
+            self.render_seg(&map.segs[seg_id], map, view_x, view_y, view_angle);
+        }
+        
+        // Add floor/ceiling planes
+        self.add_visplane(subsector.sector.floor_height, subsector.sector.floor_texture, 
+                         subsector.sector.light_level);
+        self.add_visplane(subsector.sector.ceiling_height, subsector.sector.ceiling_texture,
+                         subsector.sector.light_level);
+    }
+    
+    fn render_seg(&mut self, seg: &Seg, map: &MapData, view_x: f32, view_y: f32, view_angle: i32) {
+        let v1 = &map.vertices[seg.v1];
+        let v2 = &map.vertices[seg.v2];
+        
+        // Transform to view space
+        let (x1, y1) = self.transform_vertex(v1.x, v1.y, view_x, view_y, view_angle);
+        let (x2, y2) = self.transform_vertex(v2.x, v2.y, view_x, view_y, view_angle);
+        
+        // Clip against near plane
+        if y1 <= 0.0 && y2 <= 0.0 {
+            return;
+        }
+        
+        // Project to screen space
+        let (screen_x1, scale1) = self.project_x(x1, y1);
+        let (screen_x2, scale2) = self.project_x(x2, y2);
+        
+        // Cull if outside screen
+        if screen_x2 < 0 || screen_x1 >= SCREEN_WIDTH as i32 {
+            return;
+        }
+        
+        // Clip to screen bounds
+        let start_x = screen_x1.max(0) as u32;
+        let end_x = screen_x2.min(SCREEN_WIDTH as i32 - 1) as u32;
+        
+        // Get wall heights
+        let front_sector = &map.sectors[seg.front_sector];
+        let back_sector = seg.back_sector.map(|id| &map.sectors[id]);
+        
+        // Render wall columns
+        for x in start_x..=end_x {
+            let t = (x as i32 - screen_x1) as f32 / (screen_x2 - screen_x1) as f32;
+            let distance = self.lerp(y1, y2, t);
+            
+            // Skip if too far
+            if distance >= self.depth_buffer[x as usize] {
+                continue;
+            }
+            
+            // Calculate wall slice height
+            let wall_height = front_sector.ceiling_height - front_sector.floor_height;
+            let screen_height = (wall_height * scale1 * (1.0 - t) + wall_height * scale2 * t) as i32;
+            let top_y = (SCREEN_HEIGHT as i32 / 2) - screen_height / 2;
+            let bottom_y = top_y + screen_height;
+            
+            // Clip to open height
+            let (open_top, open_bottom) = self.open_heights[x as usize];
+            let clipped_top = top_y.max(open_top);
+            let clipped_bottom = bottom_y.min(open_bottom);
+            
+            if clipped_top < clipped_bottom {
+                // Draw wall column
+                self.draw_wall_column(x, clipped_top, clipped_bottom, seg.texture_id, 
+                                    seg.texture_offset + (x as f32 * distance), 
+                                    front_sector.light_level);
+                
+                // Update depth buffer
+                self.depth_buffer[x as usize] = distance;
+                
+                // Update open heights for portal/window
+                if back_sector.is_some() {
+                    let back = back_sector.unwrap();
+                    if back.floor_height > front_sector.floor_height {
+                        let back_floor_y = (SCREEN_HEIGHT as i32 / 2) + 
+                                         ((back.floor_height - front_sector.floor_height) * screen_height / wall_height) / 2;
+                        self.open_heights[x as usize].1 = back_floor_y.min(open_bottom);
+                    }
+                    if back.ceiling_height < front_sector.ceiling_height {
+                        let back_ceiling_y = (SCREEN_HEIGHT as i32 / 2) - 
+                                           ((front_sector.ceiling_height - back.ceiling_height) * screen_height / wall_height) / 2;
+                        self.open_heights[x as usize].0 = back_ceiling_y.max(open_top);
+                    }
+                } else {
+                    // Solid wall
+                    self.open_heights[x as usize] = (clipped_bottom, clipped_bottom);
+                }
+            }
+        }
+    }
+    
+    fn transform_vertex(&self, x: f32, y: f32, view_x: f32, view_y: f32, view_angle: i32) -> (f32, f32) {
+        let dx = x - view_x;
+        let dy = y - view_y;
+        
+        let angle_index = (view_angle >> 19) & 0x1FFF; // Convert BAM to table index
+        let sin = self.sin_table[angle_index] as f32 / 65536.0;
+        let cos = self.sin_table[(angle_index + 2048) & 0x1FFF] as f32 / 65536.0;
+        
+        let transformed_x = dx * cos + dy * sin;
+        let transformed_y = -dx * sin + dy * cos;
+        
+        (transformed_x, transformed_y)
+    }
+    
+    fn project_x(&self, x: f32, z: f32) -> (i32, f32) {
+        if z <= 0.0 {
+            return (-1, 0.0);
+        }
+        
+        let scale = (SCREEN_WIDTH as f32) / (2.0 * z);
+        let screen_x = (SCREEN_WIDTH as f32 / 2.0 + x * scale) as i32;
+        (screen_x, scale)
+    }
+    
+    fn draw_wall_column(&mut self, x: u32, top: i32, bottom: i32, texture_id: u32, u: f32, light_level: u8) {
+        let texture = &self.wall_textures[texture_id as usize];
+        let column_index = (u as u32) % texture.width;
+        let column_offset = texture.column_offsets[column_index as usize];
+        
+        // Simple texture mapping - can be optimized with fixed-point math
+        let height = bottom - top;
+        let step = texture.height as f32 / height as f32;
+        let mut tex_y = 0.0;
+        
+        for y in top..bottom {
+            if y >= 0 && y < SCREEN_HEIGHT as i32 {
+                let pixel_offset = (y as u32 * SCREEN_WIDTH + x) as usize;
+                let tex_pixel = texture.pixels[(column_offset + (tex_y as u32)) as usize];
+                let lit_pixel = self.apply_lighting(tex_pixel, light_level);
+                self.framebuffer[pixel_offset] = lit_pixel;
+            }
+            tex_y += step;
+        }
+    }
+    
+    fn add_visplane(&mut self, height: f32, texture_id: u32, light_level: u8) {
+        // Find or create visplane
+        for plane in &mut self.visplanes {
+            if plane.height == height as i32 && plane.texture_id == texture_id {
+                // Merge with existing plane
+                return;
+            }
+        }
+        
+        // Create new plane
+        self.visplanes.push(Visplane {
+            height: height as i32,
+            texture_id,
+            light_level,
+            min_x: SCREEN_WIDTH as i32,
+            max_x: 0,
+            top: [SCREEN_HEIGHT as i32; SCREEN_WIDTH as usize],
+            bottom: [0; SCREEN_WIDTH as usize],
+        });
+    }
+    
+    fn render_sprite(&mut self, sprite: &VisibleSprite, view: &ViewState) {
+        // Transform sprite position
+        let (x, z) = self.transform_vertex(sprite.x, sprite.y, view.x, view.y, view.angle);
+        
+        if z <= 0.0 {
+            return;
+        }
+        
+        // Project sprite
+        let (screen_x, scale) = self.project_x(x, z);
+        let sprite_frame = &self.sprite_frames[sprite.texture_id as usize];
+        
+        let scaled_width = (sprite_frame.width as f32 * scale) as i32;
+        let scaled_height = (sprite_frame.height as f32 * scale) as i32;
+        
+        let left = screen_x - scaled_width / 2;
+        let right = left + scaled_width;
+        let top = (SCREEN_HEIGHT as i32 / 2) - scaled_height / 2;
+        let bottom = top + scaled_height;
+        
+        // Clip and render
+        let start_x = left.max(0);
+        let end_x = right.min(SCREEN_WIDTH as i32);
+        
+        for x in start_x..end_x {
+            if z >= self.depth_buffer[x as usize] {
+                continue;
+            }
+            
+            let tex_x = ((x - left) * sprite_frame.width as i32 / scaled_width) as u32;
+            
+            for y in top.max(0)..bottom.min(SCREEN_HEIGHT as i32) {
+                let tex_y = ((y - top) * sprite_frame.height as i32 / scaled_height) as u32;
+                let pixel_index = (tex_y * sprite_frame.width + tex_x) as usize;
+                
+                if pixel_index < sprite_frame.pixels.len() {
+                    let pixel = sprite_frame.pixels[pixel_index];
+                    if pixel != 0 { // Transparent pixel
+                        let screen_index = (y as u32 * SCREEN_WIDTH + x as u32) as usize;
+                        self.framebuffer[screen_index] = self.apply_lighting(pixel, sprite.light_level);
+                    }
+                }
+            }
+        }
+    }
+    
+    fn sort_sprites(&mut self) {
+        // Sort sprites back to front for proper rendering
+        self.visible_sprites.sort_by(|a, b| {
+            let dist_a = a.x * a.x + a.y * a.y;
+            let dist_b = b.x * b.x + b.y * b.y;
+            dist_b.partial_cmp(&dist_a).unwrap()
+        });
+    }
+    
+    fn apply_lighting(&self, color: u8, light_level: u8) -> u32 {
+        // Simple lighting - darken based on light level
+        let factor = light_level as f32 / 255.0;
+        let r = ((color >> 5) & 0x07) as f32 * factor;
+        let g = ((color >> 2) & 0x07) as f32 * factor;
+        let b = (color & 0x03) as f32 * factor;
+        
+        ((r as u32) << 21) | ((g as u32) << 11) | ((b as u32) << 3)
+    }
+    
+    fn lerp(&self, a: f32, b: f32, t: f32) -> f32 {
+        a * (1.0 - t) + b * t
+    }
+    
+    fn render_hud(&mut self, player: &PlayerState) {
+        // Draw status bar
+        let bar_y = SCREEN_HEIGHT - 32;
+        
+        // Draw health
+        self.draw_number(20, bar_y + 10, player.health, 3);
+        
+        // Draw armor  
+        self.draw_number(80, bar_y + 10, player.armor, 3);
+        
+        // Draw ammo
+        self.draw_number(240, bar_y + 10, player.ammo[player.current_weapon as usize], 3);
+        
+        // Draw keys
+        if player.keys & 0x01 != 0 { // Red key
+            self.draw_icon(280, bar_y + 5, ICON_RED_KEY);
+        }
+        if player.keys & 0x02 != 0 { // Blue key
+            self.draw_icon(290, bar_y + 5, ICON_BLUE_KEY);
+        }
+        if player.keys & 0x04 != 0 { // Yellow key
+            self.draw_icon(300, bar_y + 5, ICON_YELLOW_KEY);
+        }
+    }
+    
+    fn draw_number(&mut self, x: u32, y: u32, value: u32, digits: u32) {
+        let mut num = value;
+        for i in 0..digits {
+            let digit = num % 10;
+            num /= 10;
+            let digit_x = x + (digits - i - 1) * 8;
+            self.draw_digit(digit_x, y, digit);
+        }
+    }
+    
+    fn draw_digit(&mut self, x: u32, y: u32, digit: u32) {
+        // Draw digit using bitmap font
+        const DIGIT_WIDTH: u32 = 8;
+        const DIGIT_HEIGHT: u32 = 8;
+        
+        // Simplified - would use actual font data
+        for dy in 0..DIGIT_HEIGHT {
+            for dx in 0..DIGIT_WIDTH {
+                let pixel_index = ((y + dy) * SCREEN_WIDTH + (x + dx)) as usize;
+                if pixel_index < self.framebuffer.len() {
+                    self.framebuffer[pixel_index] = 0xFFFFFF; // White
+                }
+            }
+        }
+    }
+    
+    fn draw_icon(&mut self, x: u32, y: u32, icon_id: u32) {
+        // Draw small icon for keys, etc
+        const ICON_SIZE: u32 = 8;
+        
+        for dy in 0..ICON_SIZE {
+            for dx in 0..ICON_SIZE {
+                let pixel_index = ((y + dy) * SCREEN_WIDTH + (x + dx)) as usize;
+                if pixel_index < self.framebuffer.len() {
+                    self.framebuffer[pixel_index] = match icon_id {
+                        ICON_RED_KEY => 0xFF0000,
+                        ICON_BLUE_KEY => 0x0000FF,
+                        ICON_YELLOW_KEY => 0xFFFF00,
+                        _ => 0xFFFFFF,
+                    };
+                }
+            }
+        }
+    }
+    
+    fn end_frame(&mut self) {
+        // Present framebuffer to screen
+        present_framebuffer(&self.framebuffer);
+    }
+    
+    fn load_wall_textures(&mut self, wad: &WadLoader) {
+        // Load texture definitions from TEXTURE1/TEXTURE2 lumps
+        // Simplified version - would parse actual texture definitions
+        for i in 0..128 {
+            self.wall_textures.push(Texture {
+                width: 64,
+                height: 128,
+                pixels: vec![i as u8; 64 * 128],
+                column_offsets: (0..64).map(|x| x * 128).collect(),
+            });
+        }
+    }
+    
+    fn load_flat_textures(&mut self, wad: &WadLoader) {
+        // Load flat textures (floors/ceilings)
+        for i in 0..64 {
+            self.flat_textures.push(Texture {
+                width: 64,
+                height: 64,
+                pixels: vec![i as u8; 64 * 64],
+                column_offsets: vec![],
+            });
+        }
+    }
+    
+    fn load_sprites(&mut self, wad: &WadLoader) {
+        // Load sprite graphics
+        for i in 0..256 {
+            self.sprite_frames.push(SpriteFrame {
+                width: 32,
+                height: 32,
+                left_offset: -16,
+                top_offset: -16,
+                pixels: vec![i as u8; 32 * 32],
+            });
+        }
+    }
+}
+
+// Constants
+const ICON_RED_KEY: u32 = 1;
+const ICON_BLUE_KEY: u32 = 2;
+const ICON_YELLOW_KEY: u32 = 3;
+
+// Platform-specific function
+extern fn present_framebuffer(buffer: &[u32]);

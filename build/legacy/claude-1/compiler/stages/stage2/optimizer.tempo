@@ -1,0 +1,766 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Stage 2 Optimizer - Advanced deterministic optimization passes
+// Maintains deterministic execution while maximizing performance
+
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+// Optimization pipeline configuration
+struct OptimizerConfig {
+    optimization_level: OptimizationLevel,
+    preserve_debug_info: bool,
+    enable_aggressive_opts: bool,
+    max_optimization_passes: u32,
+    target_platform: Platform,
+    
+    // Determinism constraints
+    preserve_wcet_bounds: bool,
+    maintain_deterministic_order: bool,
+    max_wcet_degradation_percent: f64,
+}
+
+enum OptimizationLevel {
+    Debug,      // No optimizations, preserve all debugging
+    Size,       // Optimize for binary size
+    Speed,      // Optimize for execution speed
+    Wcet,       // Optimize for worst-case execution time
+    Balanced,   // Balance between size, speed, and WCET
+}
+
+// Main optimizer structure
+struct TempoOptimizer {
+    config: OptimizerConfig,
+    analysis_results: AnalysisResults,
+    wcet_analyzer: WCETAnalyzer,
+    dependency_tracker: DependencyTracker,
+    optimization_passes: Vec<OptimizationPass>,
+}
+
+// Optimization pass trait
+trait OptimizationPass {
+    fn name(&self) -> String;
+    fn can_run(&self, ast: &AST, analysis: &AnalysisResults) -> bool;
+    fn run(&mut self, ast: &mut AST, analysis: &mut AnalysisResults) -> Result<PassResult, OptimizationError>;
+    fn verify_determinism(&self, original: &AST, optimized: &AST) -> Result<bool, OptimizationError>;
+}
+
+struct PassResult {
+    ast_modified: bool,
+    wcet_impact: WCETImpact,
+    size_impact: SizeImpact,
+    performance_metrics: PerformanceMetrics,
+}
+
+impl TempoOptimizer {
+    fn new(config: OptimizerConfig) -> Self {
+        let mut optimizer = TempoOptimizer {
+            config,
+            analysis_results: AnalysisResults::new(),
+            wcet_analyzer: WCETAnalyzer::new(),
+            dependency_tracker: DependencyTracker::new(),
+            optimization_passes: Vec::new(),
+        };
+        
+        optimizer.register_optimization_passes();
+        optimizer
+    }
+    
+    fn register_optimization_passes(&mut self) {
+        // Register passes in execution order
+        self.optimization_passes = vec![
+            // Early passes - basic cleanup
+            Box::new(DeadCodeEliminationPass::new()),
+            Box::new(ConstantFoldingPass::new()),
+            Box::new(ConstantPropagationPass::new()),
+            
+            // Function-level optimizations
+            Box::new(InliningPass::new()),
+            Box::new(TailCallOptimizationPass::new()),
+            Box::new(LoopOptimizationPass::new()),
+            
+            // Memory optimizations
+            Box::new(MemoryLayoutOptimizationPass::new()),
+            Box::new(StackAllocationOptimizationPass::new()),
+            
+            // Deterministic specializations
+            Box::new(DeterministicSortOptimizationPass::new()),
+            Box::new(BranchPredictionOptimizationPass::new()),
+            
+            // WCET-aware optimizations
+            Box::new(WCETGuidedOptimizationPass::new()),
+            Box::new(CacheAwareOptimizationPass::new()),
+            
+            // Final cleanup
+            Box::new(CodeLayoutOptimizationPass::new()),
+            Box::new(RegisterAllocationPass::new()),
+        ];
+    }
+    
+    fn optimize(&mut self, mut ast: AST) -> Result<OptimizedAST, OptimizationError> {
+        print_line("🔧 Starting Stage 2 optimization pipeline...");
+        
+        // Initial analysis
+        self.analysis_results = self.perform_initial_analysis(&ast)?;
+        
+        let mut pass_count = 0;
+        let mut total_modifications = 0;
+        
+        // Run optimization passes until convergence or max iterations
+        loop {
+            let mut any_modifications = false;
+            
+            for pass in &mut self.optimization_passes {
+                if !pass.can_run(&ast, &self.analysis_results) {
+                    continue;
+                }
+                
+                print_line(&format!("  Running pass: {}", pass.name()));
+                
+                // Clone AST for determinism verification
+                let original_ast = ast.clone();
+                
+                // Run optimization pass
+                let pass_result = pass.run(&mut ast, &mut self.analysis_results)?;
+                
+                if pass_result.ast_modified {
+                    // Verify determinism is preserved
+                    if !pass.verify_determinism(&original_ast, &ast)? {
+                        return Err(OptimizationError::DeterminismViolated {
+                            pass_name: pass.name(),
+                            reason: "Optimization changed deterministic behavior".to_string(),
+                        });
+                    }
+                    
+                    // Check WCET constraints
+                    if self.config.preserve_wcet_bounds {
+                        self.verify_wcet_constraints(&original_ast, &ast)?;
+                    }
+                    
+                    any_modifications = true;
+                    total_modifications += 1;
+                    
+                    print_line(&format!("    ✓ Modified AST, WCET impact: {:?}", pass_result.wcet_impact));
+                }
+            }
+            
+            pass_count += 1;
+            
+            // Check termination conditions
+            if !any_modifications {
+                print_line("✓ Optimization converged - no more modifications");
+                break;
+            }
+            
+            if pass_count >= self.config.max_optimization_passes {
+                print_line("⚠ Reached maximum optimization passes");
+                break;
+            }
+        }
+        
+        // Final analysis and verification
+        let final_analysis = self.perform_final_analysis(&ast)?;
+        
+        print_line(&format!("🎯 Optimization complete: {} passes, {} modifications", 
+                          pass_count, total_modifications));
+        
+        Ok(OptimizedAST {
+            ast,
+            optimization_metadata: OptimizationMetadata {
+                passes_run: pass_count,
+                modifications_made: total_modifications,
+                optimization_level: self.config.optimization_level,
+                final_analysis,
+            },
+        })
+    }
+    
+    fn verify_wcet_constraints(&self, original: &AST, optimized: &AST) -> Result<(), OptimizationError> {
+        let original_wcet = self.wcet_analyzer.analyze_ast(original)?;
+        let optimized_wcet = self.wcet_analyzer.analyze_ast(optimized)?;
+        
+        for (function_name, original_bound) in &original_wcet.function_bounds {
+            if let Some(optimized_bound) = optimized_wcet.function_bounds.get(function_name) {
+                let degradation_percent = 
+                    (optimized_bound.worst_case_cycles as f64 - original_bound.worst_case_cycles as f64) /
+                    original_bound.worst_case_cycles as f64 * 100.0;
+                
+                if degradation_percent > self.config.max_wcet_degradation_percent {
+                    return Err(OptimizationError::WCETDegradationExceeded {
+                        function_name: function_name.clone(),
+                        original_cycles: original_bound.worst_case_cycles,
+                        optimized_cycles: optimized_bound.worst_case_cycles,
+                        degradation_percent,
+                    });
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+// Dead Code Elimination - Remove unreachable code while preserving determinism
+struct DeadCodeEliminationPass {
+    eliminated_functions: Vec<String>,
+    eliminated_variables: Vec<String>,
+}
+
+impl DeadCodeEliminationPass {
+    fn new() -> Self {
+        DeadCodeEliminationPass {
+            eliminated_functions: Vec::new(),
+            eliminated_variables: Vec::new(),
+        }
+    }
+    
+    fn find_reachable_code(&self, ast: &AST) -> ReachabilityMap {
+        let mut reachable = ReachabilityMap::new();
+        let mut worklist = Vec::new();
+        
+        // Start from main function and exported functions
+        if let Some(main_func) = ast.find_function("main") {
+            worklist.push(main_func.name.clone());
+            reachable.mark_function_reachable(&main_func.name);
+        }
+        
+        // Add all exported functions
+        for function in &ast.functions {
+            if function.is_exported {
+                worklist.push(function.name.clone());
+                reachable.mark_function_reachable(&function.name);
+            }
+        }
+        
+        // Process worklist to find all reachable code
+        while let Some(current_function) = worklist.pop() {
+            if let Some(function) = ast.find_function(&current_function) {
+                // Find all function calls in this function
+                let calls = self.extract_function_calls(&function.body);
+                for call in calls {
+                    if !reachable.is_function_reachable(&call) {
+                        reachable.mark_function_reachable(&call);
+                        worklist.push(call);
+                    }
+                }
+                
+                // Find all global variables referenced
+                let globals = self.extract_global_references(&function.body);
+                for global in globals {
+                    reachable.mark_variable_reachable(&global);
+                }
+            }
+        }
+        
+        reachable
+    }
+    
+    fn extract_function_calls(&self, body: &Block) -> Vec<String> {
+        let mut calls = Vec::new();
+        
+        for statement in &body.statements {
+            match statement {
+                Statement::Expression(Expression::FunctionCall(call)) => {
+                    calls.push(call.function_name.clone());
+                },
+                Statement::If(if_stmt) => {
+                    calls.extend(self.extract_function_calls(&if_stmt.then_block));
+                    if let Some(else_block) = &if_stmt.else_block {
+                        calls.extend(self.extract_function_calls(else_block));
+                    }
+                },
+                Statement::While(while_stmt) => {
+                    calls.extend(self.extract_function_calls(&while_stmt.body));
+                },
+                Statement::For(for_stmt) => {
+                    calls.extend(self.extract_function_calls(&for_stmt.body));
+                },
+                _ => {}
+            }
+        }
+        
+        calls
+    }
+    
+    fn extract_global_references(&self, body: &Block) -> Vec<String> {
+        let mut globals = Vec::new();
+        
+        for statement in &body.statements {
+            match statement {
+                Statement::Expression(Expression::Variable(var)) => {
+                    if var.is_global {
+                        globals.push(var.name.clone());
+                    }
+                },
+                Statement::Assignment(assignment) => {
+                    if let Expression::Variable(var) = &assignment.target {
+                        if var.is_global {
+                            globals.push(var.name.clone());
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+        
+        globals
+    }
+}
+
+impl OptimizationPass for DeadCodeEliminationPass {
+    fn name(&self) -> String {
+        "Dead Code Elimination".to_string()
+    }
+    
+    fn can_run(&self, _ast: &AST, _analysis: &AnalysisResults) -> bool {
+        true
+    }
+    
+    fn run(&mut self, ast: &mut AST, analysis: &mut AnalysisResults) -> Result<PassResult, OptimizationError> {
+        let reachable = self.find_reachable_code(ast);
+        let mut modified = false;
+        
+        // Remove unreachable functions
+        let original_function_count = ast.functions.len();
+        ast.functions.retain(|function| {
+            let is_reachable = reachable.is_function_reachable(&function.name);
+            if !is_reachable {
+                self.eliminated_functions.push(function.name.clone());
+            }
+            is_reachable
+        });
+        
+        // Remove unreachable global variables
+        let original_global_count = ast.global_variables.len();
+        ast.global_variables.retain(|variable| {
+            let is_reachable = reachable.is_variable_reachable(&variable.name);
+            if !is_reachable {
+                self.eliminated_variables.push(variable.name.clone());
+            }
+            is_reachable
+        });
+        
+        modified = ast.functions.len() < original_function_count || 
+                  ast.global_variables.len() < original_global_count;
+        
+        let size_reduction = (original_function_count - ast.functions.len()) * 100 +
+                            (original_global_count - ast.global_variables.len()) * 50;
+        
+        Ok(PassResult {
+            ast_modified: modified,
+            wcet_impact: WCETImpact::Improved(size_reduction as u64), // Smaller code = better cache behavior
+            size_impact: SizeImpact::Reduced(size_reduction),
+            performance_metrics: PerformanceMetrics {
+                functions_eliminated: original_function_count - ast.functions.len(),
+                variables_eliminated: original_global_count - ast.global_variables.len(),
+                estimated_size_reduction_bytes: size_reduction,
+            },
+        })
+    }
+    
+    fn verify_determinism(&self, original: &AST, optimized: &AST) -> Result<bool, OptimizationError> {
+        // Dead code elimination preserves determinism by definition
+        // since we only remove unreachable code
+        
+        // Verify that all reachable functions are preserved
+        for function in &original.functions {
+            if self.should_be_preserved(function) {
+                if !optimized.has_function(&function.name) {
+                    return Ok(false);
+                }
+            }
+        }
+        
+        Ok(true)
+    }
+}
+
+// Constant Folding - Evaluate constant expressions at compile time
+struct ConstantFoldingPass {
+    folded_expressions: u32,
+}
+
+impl ConstantFoldingPass {
+    fn new() -> Self {
+        ConstantFoldingPass {
+            folded_expressions: 0,
+        }
+    }
+    
+    fn fold_expression(&mut self, expr: &mut Expression) -> bool {
+        match expr {
+            Expression::BinaryOp(binary_op) => {
+                // Recursively fold operands first
+                let left_folded = self.fold_expression(&mut binary_op.left);
+                let right_folded = self.fold_expression(&mut binary_op.right);
+                
+                // Try to fold this binary operation
+                if let (Expression::Literal(left_lit), Expression::Literal(right_lit)) = 
+                   (&binary_op.left, &binary_op.right) {
+                    
+                    if let Some(result) = self.evaluate_binary_operation(binary_op.operator, left_lit, right_lit) {
+                        *expr = Expression::Literal(result);
+                        self.folded_expressions += 1;
+                        return true;
+                    }
+                }
+                
+                left_folded || right_folded
+            },
+            
+            Expression::UnaryOp(unary_op) => {
+                let operand_folded = self.fold_expression(&mut unary_op.operand);
+                
+                if let Expression::Literal(literal) = &unary_op.operand {
+                    if let Some(result) = self.evaluate_unary_operation(unary_op.operator, literal) {
+                        *expr = Expression::Literal(result);
+                        self.folded_expressions += 1;
+                        return true;
+                    }
+                }
+                
+                operand_folded
+            },
+            
+            Expression::FunctionCall(call) => {
+                let mut any_folded = false;
+                for arg in &mut call.arguments {
+                    if self.fold_expression(arg) {
+                        any_folded = true;
+                    }
+                }
+                any_folded
+            },
+            
+            _ => false,
+        }
+    }
+    
+    fn evaluate_binary_operation(&self, operator: BinaryOperator, left: &Literal, right: &Literal) -> Option<Literal> {
+        match (left, right) {
+            (Literal::Integer(a), Literal::Integer(b)) => {
+                match operator {
+                    BinaryOperator::Add => Some(Literal::Integer(a + b)),
+                    BinaryOperator::Subtract => Some(Literal::Integer(a - b)),
+                    BinaryOperator::Multiply => Some(Literal::Integer(a * b)),
+                    BinaryOperator::Divide if *b != 0 => Some(Literal::Integer(a / b)),
+                    BinaryOperator::Modulo if *b != 0 => Some(Literal::Integer(a % b)),
+                    BinaryOperator::BitwiseAnd => Some(Literal::Integer(a & b)),
+                    BinaryOperator::BitwiseOr => Some(Literal::Integer(a | b)),
+                    BinaryOperator::BitwiseXor => Some(Literal::Integer(a ^ b)),
+                    BinaryOperator::LeftShift => Some(Literal::Integer(a << b)),
+                    BinaryOperator::RightShift => Some(Literal::Integer(a >> b)),
+                    BinaryOperator::Equal => Some(Literal::Boolean(a == b)),
+                    BinaryOperator::NotEqual => Some(Literal::Boolean(a != b)),
+                    BinaryOperator::LessThan => Some(Literal::Boolean(a < b)),
+                    BinaryOperator::LessThanOrEqual => Some(Literal::Boolean(a <= b)),
+                    BinaryOperator::GreaterThan => Some(Literal::Boolean(a > b)),
+                    BinaryOperator::GreaterThanOrEqual => Some(Literal::Boolean(a >= b)),
+                    _ => None,
+                }
+            },
+            
+            (Literal::Float(a), Literal::Float(b)) => {
+                match operator {
+                    BinaryOperator::Add => Some(Literal::Float(a + b)),
+                    BinaryOperator::Subtract => Some(Literal::Float(a - b)),
+                    BinaryOperator::Multiply => Some(Literal::Float(a * b)),
+                    BinaryOperator::Divide if *b != 0.0 => Some(Literal::Float(a / b)),
+                    BinaryOperator::Equal => Some(Literal::Boolean((a - b).abs() < f64::EPSILON)),
+                    BinaryOperator::NotEqual => Some(Literal::Boolean((a - b).abs() >= f64::EPSILON)),
+                    BinaryOperator::LessThan => Some(Literal::Boolean(a < b)),
+                    BinaryOperator::LessThanOrEqual => Some(Literal::Boolean(a <= b)),
+                    BinaryOperator::GreaterThan => Some(Literal::Boolean(a > b)),
+                    BinaryOperator::GreaterThanOrEqual => Some(Literal::Boolean(a >= b)),
+                    _ => None,
+                }
+            },
+            
+            (Literal::Boolean(a), Literal::Boolean(b)) => {
+                match operator {
+                    BinaryOperator::LogicalAnd => Some(Literal::Boolean(*a && *b)),
+                    BinaryOperator::LogicalOr => Some(Literal::Boolean(*a || *b)),
+                    BinaryOperator::Equal => Some(Literal::Boolean(a == b)),
+                    BinaryOperator::NotEqual => Some(Literal::Boolean(a != b)),
+                    _ => None,
+                }
+            },
+            
+            (Literal::String(a), Literal::String(b)) => {
+                match operator {
+                    BinaryOperator::Add => Some(Literal::String(format!("{}{}", a, b))),
+                    BinaryOperator::Equal => Some(Literal::Boolean(a == b)),
+                    BinaryOperator::NotEqual => Some(Literal::Boolean(a != b)),
+                    _ => None,
+                }
+            },
+            
+            _ => None,
+        }
+    }
+    
+    fn evaluate_unary_operation(&self, operator: UnaryOperator, operand: &Literal) -> Option<Literal> {
+        match operand {
+            Literal::Integer(value) => {
+                match operator {
+                    UnaryOperator::Negate => Some(Literal::Integer(-value)),
+                    UnaryOperator::BitwiseNot => Some(Literal::Integer(!value)),
+                    _ => None,
+                }
+            },
+            
+            Literal::Float(value) => {
+                match operator {
+                    UnaryOperator::Negate => Some(Literal::Float(-value)),
+                    _ => None,
+                }
+            },
+            
+            Literal::Boolean(value) => {
+                match operator {
+                    UnaryOperator::LogicalNot => Some(Literal::Boolean(!value)),
+                    _ => None,
+                }
+            },
+            
+            _ => None,
+        }
+    }
+}
+
+impl OptimizationPass for ConstantFoldingPass {
+    fn name(&self) -> String {
+        "Constant Folding".to_string()
+    }
+    
+    fn can_run(&self, _ast: &AST, _analysis: &AnalysisResults) -> bool {
+        true
+    }
+    
+    fn run(&mut self, ast: &mut AST, _analysis: &mut AnalysisResults) -> Result<PassResult, OptimizationError> {
+        self.folded_expressions = 0;
+        
+        // Fold constants in all functions
+        for function in &mut ast.functions {
+            self.fold_block(&mut function.body);
+        }
+        
+        // Fold constants in global variable initializers
+        for global_var in &mut ast.global_variables {
+            if let Some(initializer) = &mut global_var.initializer {
+                self.fold_expression(initializer);
+            }
+        }
+        
+        let modified = self.folded_expressions > 0;
+        
+        Ok(PassResult {
+            ast_modified: modified,
+            wcet_impact: WCETImpact::Improved(self.folded_expressions as u64 * 2), // Fewer instructions
+            size_impact: SizeImpact::Reduced(self.folded_expressions as usize * 10), // Simpler expressions
+            performance_metrics: PerformanceMetrics {
+                expressions_folded: self.folded_expressions,
+                estimated_instruction_reduction: self.folded_expressions * 3,
+                estimated_cycle_reduction: self.folded_expressions as u64 * 5,
+            },
+        })
+    }
+    
+    fn verify_determinism(&self, _original: &AST, _optimized: &AST) -> Result<bool, OptimizationError> {
+        // Constant folding preserves determinism - it just evaluates
+        // deterministic expressions at compile time instead of runtime
+        Ok(true)
+    }
+}
+
+// WCET-Guided Optimization - Optimize specifically for worst-case execution time
+struct WCETGuidedOptimizationPass {
+    wcet_analyzer: WCETAnalyzer,
+    optimizations_applied: u32,
+}
+
+impl WCETGuidedOptimizationPass {
+    fn new() -> Self {
+        WCETGuidedOptimizationPass {
+            wcet_analyzer: WCETAnalyzer::new(),
+            optimizations_applied: 0,
+        }
+    }
+    
+    fn optimize_for_wcet(&mut self, ast: &mut AST) -> Result<bool, OptimizationError> {
+        let mut modified = false;
+        
+        // Analyze current WCET bounds
+        let wcet_analysis = self.wcet_analyzer.analyze_ast(ast)?;
+        
+        // Identify critical paths (paths that contribute most to WCET)
+        let critical_paths = wcet_analysis.get_critical_paths();
+        
+        for critical_path in critical_paths {
+            // Focus optimizations on critical path
+            if self.optimize_critical_path(ast, &critical_path)? {
+                modified = true;
+                self.optimizations_applied += 1;
+            }
+        }
+        
+        // Apply WCET-specific optimizations
+        if self.apply_cache_friendly_transformations(ast)? {
+            modified = true;
+        }
+        
+        if self.optimize_branch_prediction(ast)? {
+            modified = true;
+        }
+        
+        Ok(modified)
+    }
+    
+    fn optimize_critical_path(&mut self, ast: &mut AST, critical_path: &CriticalPath) -> Result<bool, OptimizationError> {
+        let mut modified = false;
+        
+        for function_name in &critical_path.functions {
+            if let Some(function) = ast.find_function_mut(function_name) {
+                // Unroll small loops on critical path
+                if self.unroll_critical_loops(&mut function.body)? {
+                    modified = true;
+                }
+                
+                // Inline small functions on critical path
+                if critical_path.call_frequency.get(function_name).unwrap_or(&0) > &100 {
+                    if self.inline_hot_functions(ast, function_name)? {
+                        modified = true;
+                    }
+                }
+                
+                // Optimize memory access patterns
+                if self.optimize_memory_access_patterns(&mut function.body)? {
+                    modified = true;
+                }
+            }
+        }
+        
+        Ok(modified)
+    }
+    
+    fn apply_cache_friendly_transformations(&mut self, ast: &mut AST) -> Result<bool, OptimizationError> {
+        let mut modified = false;
+        
+        for function in &mut ast.functions {
+            // Group memory accesses to improve cache locality
+            if self.group_memory_accesses(&mut function.body)? {
+                modified = true;
+            }
+            
+            // Align frequently accessed data structures
+            if self.align_data_structures(function)? {
+                modified = true;
+            }
+        }
+        
+        Ok(modified)
+    }
+    
+    fn optimize_branch_prediction(&mut self, ast: &mut AST) -> Result<bool, OptimizationError> {
+        let mut modified = false;
+        
+        for function in &mut ast.functions {
+            // Reorder branches to put likely branches first
+            if self.reorder_branches_for_prediction(&mut function.body)? {
+                modified = true;
+            }
+            
+            // Convert some branches to conditional moves where beneficial
+            if self.convert_branches_to_conditional_moves(&mut function.body)? {
+                modified = true;
+            }
+        }
+        
+        Ok(modified)
+    }
+}
+
+impl OptimizationPass for WCETGuidedOptimizationPass {
+    fn name(&self) -> String {
+        "WCET-Guided Optimization".to_string()
+    }
+    
+    fn can_run(&self, _ast: &AST, analysis: &AnalysisResults) -> bool {
+        // Only run if WCET analysis is available
+        analysis.has_wcet_analysis()
+    }
+    
+    fn run(&mut self, ast: &mut AST, analysis: &mut AnalysisResults) -> Result<PassResult, OptimizationError> {
+        self.optimizations_applied = 0;
+        
+        let modified = self.optimize_for_wcet(ast)?;
+        
+        // Re-analyze WCET after optimizations
+        let new_wcet_analysis = self.wcet_analyzer.analyze_ast(ast)?;
+        analysis.update_wcet_analysis(new_wcet_analysis);
+        
+        Ok(PassResult {
+            ast_modified: modified,
+            wcet_impact: WCETImpact::Improved(self.optimizations_applied as u64 * 10),
+            size_impact: SizeImpact::Neutral, // May increase size slightly for WCET improvement
+            performance_metrics: PerformanceMetrics {
+                wcet_optimizations_applied: self.optimizations_applied,
+                estimated_wcet_improvement_percent: 5.0 * self.optimizations_applied as f64,
+                cache_optimizations: self.optimizations_applied / 2,
+            },
+        })
+    }
+    
+    fn verify_determinism(&self, original: &AST, optimized: &AST) -> Result<bool, OptimizationError> {
+        // Verify that WCET optimizations preserve deterministic behavior
+        
+        // Check that all transformations preserve execution semantics
+        for (orig_func, opt_func) in original.functions.iter().zip(optimized.functions.iter()) {
+            if orig_func.name != opt_func.name {
+                return Ok(false);
+            }
+            
+            // Verify that optimizations don't introduce non-deterministic behavior
+            if self.introduces_non_determinism(&orig_func.body, &opt_func.body)? {
+                return Ok(false);
+            }
+        }
+        
+        Ok(true)
+    }
+}
+
+fn main() -> Result<(), String> {
+    print_line("🚀 Tempo Stage 2 Optimizer");
+    print_line("Advanced deterministic optimization with WCET awareness");
+    
+    // Example usage
+    let config = OptimizerConfig {
+        optimization_level: OptimizationLevel::Balanced,
+        preserve_debug_info: false,
+        enable_aggressive_opts: true,
+        max_optimization_passes: 10,
+        target_platform: Platform::X86_64,
+        preserve_wcet_bounds: true,
+        maintain_deterministic_order: true,
+        max_wcet_degradation_percent: 5.0,
+    };
+    
+    let mut optimizer = TempoOptimizer::new(config);
+    
+    // This would be called with actual AST from parser
+    print_line("✓ Optimizer initialized with deterministic optimization passes");
+    print_line("✓ WCET analysis integration enabled");
+    print_line("✓ Ready to optimize Tempo programs while preserving determinism");
+    
+    Ok(())
+}

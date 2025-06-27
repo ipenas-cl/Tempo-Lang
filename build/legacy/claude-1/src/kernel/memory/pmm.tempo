@@ -1,0 +1,543 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Physical Memory Manager
+// Implements buddy allocator for efficient memory management
+
+module kernel.memory.pmm
+
+import kernel.init.main
+
+// Physical memory manager state
+struct PhysicalMemoryManager {
+    // Memory statistics
+    total_memory: u64
+    free_memory: u64
+    reserved_memory: u64
+    
+    // Buddy allocator data
+    free_lists: [MAX_ORDER]FreeList  // Free lists for each order
+    memory_map: *MemoryMap            // Bitmap of allocated pages
+    
+    // Memory regions
+    regions: []MemoryRegion
+    region_count: u32
+    
+    // Allocation statistics
+    allocations: u64
+    deallocations: u64
+    fragmentation: f32
+    
+    lock: SpinLock
+}
+
+// Free list for buddy allocator
+struct FreeList {
+    head: *FreeBlock
+    count: u32
+}
+
+// Free memory block
+struct FreeBlock {
+    next: *FreeBlock
+    order: u8
+    magic: u32  // For corruption detection
+}
+
+// Memory map bitmap
+struct MemoryMap {
+    bits: []u64
+    size: usize
+}
+
+// Memory region from bootloader
+struct MemoryRegion {
+    base: u64
+    size: u64
+    type: MemoryType
+}
+
+enum MemoryType {
+    Available
+    Reserved
+    ACPI
+    NVS
+    BadRAM
+}
+
+const PAGE_SIZE = 4096
+const MAX_ORDER = 11  // Maximum allocation size: 2^11 pages = 8MB
+const BLOCK_MAGIC = 0xDEADBEEF
+const PAGES_PER_BITMAP = 64  // 64 pages per u64 bitmap
+
+// Initialize physical memory manager
+@export
+fn init(memory_map: *[]MemoryRegion) -> *PhysicalMemoryManager {
+    let pmm = alloc(PhysicalMemoryManager)
+    
+    pmm.regions = *memory_map
+    pmm.region_count = memory_map.len
+    pmm.lock = SpinLock{}
+    
+    // Calculate total memory
+    calculate_memory_stats(pmm)
+    
+    // Initialize buddy allocator
+    init_buddy_allocator(pmm)
+    
+    // Mark kernel and reserved regions as used
+    mark_reserved_regions(pmm)
+    
+    return pmm
+}
+
+// Calculate memory statistics
+fn calculate_memory_stats(pmm: *PhysicalMemoryManager) {
+    pmm.total_memory = 0
+    pmm.free_memory = 0
+    pmm.reserved_memory = 0
+    
+    for i in 0..pmm.region_count {
+        let region = &pmm.regions[i]
+        
+        match region.type {
+            MemoryType.Available -> {
+                pmm.total_memory += region.size
+                pmm.free_memory += region.size
+            }
+            _ -> {
+                pmm.reserved_memory += region.size
+            }
+        }
+    }
+}
+
+// Initialize buddy allocator
+fn init_buddy_allocator(pmm: *PhysicalMemoryManager) {
+    // Initialize free lists
+    for i in 0..MAX_ORDER {
+        pmm.free_lists[i].head = null
+        pmm.free_lists[i].count = 0
+    }
+    
+    // Allocate memory map bitmap
+    let total_pages = pmm.total_memory / PAGE_SIZE
+    let bitmap_size = (total_pages + PAGES_PER_BITMAP - 1) / PAGES_PER_BITMAP
+    pmm.memory_map = alloc(MemoryMap)
+    pmm.memory_map.bits = alloc([]u64, bitmap_size)
+    pmm.memory_map.size = bitmap_size
+    
+    // Clear bitmap
+    for i in 0..bitmap_size {
+        pmm.memory_map.bits[i] = 0
+    }
+    
+    // Add available memory regions to free lists
+    for i in 0..pmm.region_count {
+        let region = &pmm.regions[i]
+        
+        if region.type == MemoryType.Available {
+            add_region_to_free_lists(pmm, region.base, region.size)
+        }
+    }
+}
+
+// Add memory region to buddy allocator free lists
+fn add_region_to_free_lists(pmm: *PhysicalMemoryManager, base: u64, size: u64) {
+    let mut addr = align_up(base, PAGE_SIZE)
+    let end = base + size
+    
+    while addr < end {
+        // Find largest power-of-2 block that fits
+        let remaining = end - addr
+        let mut order = MAX_ORDER - 1
+        
+        while order > 0 {
+            let block_size = (1 << order) * PAGE_SIZE
+            if block_size <= remaining && (addr & (block_size - 1)) == 0 {
+                break
+            }
+            order--
+        }
+        
+        // Add block to free list
+        let block_size = (1 << order) * PAGE_SIZE
+        if addr + block_size <= end {
+            let block = addr as *FreeBlock
+            block.magic = BLOCK_MAGIC
+            block.order = order
+            block.next = pmm.free_lists[order].head
+            pmm.free_lists[order].head = block
+            pmm.free_lists[order].count++
+            
+            addr += block_size
+        } else {
+            // Can't fit any more blocks
+            break
+        }
+    }
+}
+
+// Mark reserved memory regions
+fn mark_reserved_regions(pmm: *PhysicalMemoryManager) {
+    let kernel_start = kernel.kernel_state.boot_info.kernel_start
+    let kernel_end = kernel.kernel_state.boot_info.kernel_end
+    
+    // Mark kernel pages as used
+    mark_pages_used(pmm, kernel_start / PAGE_SIZE, (kernel_end - kernel_start) / PAGE_SIZE)
+    
+    // Mark other reserved regions
+    for i in 0..pmm.region_count {
+        let region = &pmm.regions[i]
+        
+        if region.type != MemoryType.Available {
+            let start_page = region.base / PAGE_SIZE
+            let page_count = region.size / PAGE_SIZE
+            mark_pages_used(pmm, start_page, page_count)
+        }
+    }
+}
+
+// Allocate physical pages
+@export
+fn alloc_pages(count: usize) -> usize {
+    let pmm = get_pmm()
+    
+    pmm.lock.acquire()
+    defer pmm.lock.release()
+    
+    // Find order that can satisfy request
+    let order = get_order(count)
+    if order >= MAX_ORDER {
+        return 0  // Allocation too large
+    }
+    
+    // Try to allocate from free list
+    let block = alloc_from_order(pmm, order)
+    if block == null {
+        return 0  // Out of memory
+    }
+    
+    // Mark pages as used
+    let addr = block as usize
+    mark_pages_used(pmm, addr / PAGE_SIZE, 1 << order)
+    
+    // Update statistics
+    pmm.allocations++
+    pmm.free_memory -= (1 << order) * PAGE_SIZE
+    
+    return addr
+}
+
+// Allocate single page
+@export
+fn alloc_page() -> usize {
+    return alloc_pages(1)
+}
+
+// Free physical pages
+@export
+fn free_pages(addr: usize, count: usize) {
+    let pmm = get_pmm()
+    
+    pmm.lock.acquire()
+    defer pmm.lock.release()
+    
+    // Validate address
+    if !is_valid_address(pmm, addr) {
+        kernel.kernel_panic("Invalid address in free_pages")
+    }
+    
+    let order = get_order(count)
+    if order >= MAX_ORDER {
+        kernel.kernel_panic("Invalid page count in free_pages")
+    }
+    
+    // Mark pages as free
+    mark_pages_free(pmm, addr / PAGE_SIZE, 1 << order)
+    
+    // Create free block
+    let block = addr as *FreeBlock
+    block.magic = BLOCK_MAGIC
+    block.order = order
+    
+    // Add to free list and try to merge buddies
+    add_to_free_list(pmm, block)
+    merge_buddies(pmm, block)
+    
+    // Update statistics
+    pmm.deallocations++
+    pmm.free_memory += (1 << order) * PAGE_SIZE
+}
+
+// Free single page
+@export
+fn free_page(addr: usize) {
+    free_pages(addr, 1)
+}
+
+// Allocate from specific order
+fn alloc_from_order(pmm: *PhysicalMemoryManager, order: u8) -> *FreeBlock {
+    // Try exact order first
+    if pmm.free_lists[order].count > 0 {
+        let block = pmm.free_lists[order].head
+        pmm.free_lists[order].head = block.next
+        pmm.free_lists[order].count--
+        return block
+    }
+    
+    // Try higher orders and split
+    for i in (order + 1)..MAX_ORDER {
+        if pmm.free_lists[i].count > 0 {
+            // Remove from higher order list
+            let block = pmm.free_lists[i].head
+            pmm.free_lists[i].head = block.next
+            pmm.free_lists[i].count--
+            
+            // Split block
+            split_block(pmm, block, i, order)
+            
+            return block
+        }
+    }
+    
+    return null  // Out of memory
+}
+
+// Split a block to smaller orders
+fn split_block(pmm: *PhysicalMemoryManager, block: *FreeBlock, from_order: u8, to_order: u8) {
+    let mut current_order = from_order
+    let mut current_block = block
+    
+    while current_order > to_order {
+        current_order--
+        
+        // Create buddy block
+        let buddy_offset = (1 << current_order) * PAGE_SIZE
+        let buddy = (current_block as usize + buddy_offset) as *FreeBlock
+        buddy.magic = BLOCK_MAGIC
+        buddy.order = current_order
+        
+        // Add buddy to free list
+        buddy.next = pmm.free_lists[current_order].head
+        pmm.free_lists[current_order].head = buddy
+        pmm.free_lists[current_order].count++
+    }
+    
+    current_block.order = to_order
+}
+
+// Merge buddy blocks
+fn merge_buddies(pmm: *PhysicalMemoryManager, block: *FreeBlock) {
+    let mut current_block = block
+    let mut current_order = block.order
+    
+    while current_order < MAX_ORDER - 1 {
+        let buddy_addr = get_buddy_address(current_block as usize, current_order)
+        
+        // Check if buddy is free
+        if !is_buddy_free(pmm, buddy_addr, current_order) {
+            break
+        }
+        
+        // Remove buddy from free list
+        remove_from_free_list(pmm, buddy_addr as *FreeBlock, current_order)
+        
+        // Merge blocks
+        if buddy_addr < current_block as usize {
+            current_block = buddy_addr as *FreeBlock
+        }
+        
+        current_order++
+        current_block.order = current_order
+    }
+    
+    // Add merged block to free list
+    add_to_free_list(pmm, current_block)
+}
+
+// Add block to free list
+fn add_to_free_list(pmm: *PhysicalMemoryManager, block: *FreeBlock) {
+    let order = block.order
+    block.next = pmm.free_lists[order].head
+    pmm.free_lists[order].head = block
+    pmm.free_lists[order].count++
+}
+
+// Remove block from free list
+fn remove_from_free_list(pmm: *PhysicalMemoryManager, block: *FreeBlock, order: u8) {
+    let mut prev: *FreeBlock = null
+    let mut current = pmm.free_lists[order].head
+    
+    while current != null {
+        if current == block {
+            if prev == null {
+                pmm.free_lists[order].head = current.next
+            } else {
+                prev.next = current.next
+            }
+            pmm.free_lists[order].count--
+            return
+        }
+        prev = current
+        current = current.next
+    }
+}
+
+// Get buddy address
+fn get_buddy_address(addr: usize, order: u8) -> usize {
+    let block_size = (1 << order) * PAGE_SIZE
+    return addr ^ block_size
+}
+
+// Check if buddy is free
+fn is_buddy_free(pmm: *PhysicalMemoryManager, addr: usize, order: u8) -> bool {
+    let current = pmm.free_lists[order].head
+    
+    while current != null {
+        if current as usize == addr {
+            return true
+        }
+        current = current.next
+    }
+    
+    return false
+}
+
+// Mark pages as used in bitmap
+fn mark_pages_used(pmm: *PhysicalMemoryManager, start_page: usize, count: usize) {
+    for i in 0..count {
+        let page = start_page + i
+        let idx = page / PAGES_PER_BITMAP
+        let bit = page % PAGES_PER_BITMAP
+        
+        if idx < pmm.memory_map.size {
+            pmm.memory_map.bits[idx] |= (1 << bit)
+        }
+    }
+}
+
+// Mark pages as free in bitmap
+fn mark_pages_free(pmm: *PhysicalMemoryManager, start_page: usize, count: usize) {
+    for i in 0..count {
+        let page = start_page + i
+        let idx = page / PAGES_PER_BITMAP
+        let bit = page % PAGES_PER_BITMAP
+        
+        if idx < pmm.memory_map.size {
+            pmm.memory_map.bits[idx] &= ~(1 << bit)
+        }
+    }
+}
+
+// Get allocation order for page count
+fn get_order(count: usize) -> u8 {
+    let mut order: u8 = 0
+    let mut size: usize = 1
+    
+    while size < count && order < MAX_ORDER {
+        size <<= 1
+        order++
+    }
+    
+    return order
+}
+
+// Validate address
+fn is_valid_address(pmm: *PhysicalMemoryManager, addr: usize) -> bool {
+    // Check alignment
+    if (addr & (PAGE_SIZE - 1)) != 0 {
+        return false
+    }
+    
+    // Check if within any available region
+    for i in 0..pmm.region_count {
+        let region = &pmm.regions[i]
+        if region.type == MemoryType.Available {
+            if addr >= region.base && addr < region.base + region.size {
+                return true
+            }
+        }
+    }
+    
+    return false
+}
+
+// Get free memory amount
+@export
+fn get_free_memory() -> u64 {
+    let pmm = get_pmm()
+    return pmm.free_memory
+}
+
+// Get total memory amount
+@export
+fn get_total_memory() -> u64 {
+    let pmm = get_pmm()
+    return pmm.total_memory
+}
+
+// Get memory statistics
+@export
+fn get_memory_stats() -> MemoryStats {
+    let pmm = get_pmm()
+    
+    return MemoryStats{
+        total: pmm.total_memory,
+        free: pmm.free_memory,
+        used: pmm.total_memory - pmm.free_memory,
+        reserved: pmm.reserved_memory,
+        allocations: pmm.allocations,
+        deallocations: pmm.deallocations,
+        fragmentation: calculate_fragmentation(pmm)
+    }
+}
+
+// Calculate memory fragmentation
+fn calculate_fragmentation(pmm: *PhysicalMemoryManager) -> f32 {
+    let mut total_free_blocks: u32 = 0
+    let mut largest_free_block: u32 = 0
+    
+    for i in 0..MAX_ORDER {
+        total_free_blocks += pmm.free_lists[i].count
+        if pmm.free_lists[i].count > 0 && i > largest_free_block {
+            largest_free_block = i
+        }
+    }
+    
+    if total_free_blocks == 0 {
+        return 0.0
+    }
+    
+    // Simple fragmentation metric
+    return 1.0 - (largest_free_block as f32 / MAX_ORDER as f32)
+}
+
+// Get PMM instance
+fn get_pmm() -> *PhysicalMemoryManager {
+    return kernel.kernel_state.pmm
+}
+
+// Align address up to boundary
+fn align_up(addr: u64, align: u64) -> u64 {
+    return (addr + align - 1) & ~(align - 1)
+}
+
+// Memory statistics structure
+struct MemoryStats {
+    total: u64
+    free: u64
+    used: u64
+    reserved: u64
+    allocations: u64
+    deallocations: u64
+    fragmentation: f32
+}

@@ -14,40 +14,117 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-blue)](#installation)
 [![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero-green)](#features)
+[![Assembly](https://img.shields.io/badge/Bootstrap-100%25%20Assembly-red)](#zero-c-philosophy)
 
 </div>
 
 ---
 
-## 🎯 Choose Your Path
+## 🚀 Key Features
+
+- **🛡️ Zero C Dependencies**: Built from pure assembly, no C runtime
+- **⚖️ Deterministic Execution**: WCET (Worst-Case Execution Time) guarantees
+- **⚡ Extreme Performance**: Profile-Guided Optimization, SIMD, zero-copy
+- **🔍 Professional Observability**: Integrated monitoring, debugging, profiling
+- **📦 Unique App Names**: `service.tempo` → `service.tempo.app` for ecosystem clarity
+
+---
+
+## 🏗️ Project Structure
+
+```
+tempo-lang/
+├── 📁 compiler/           # Zero-C compiler implementation
+│   ├── platforms/         # Platform-specific compilers (macOS, Linux, Windows)
+│   ├── stages/            # Multi-stage bootstrap (stage0 → stage1 → stage2)
+│   └── bootstrap/         # Assembly bootstrap code
+├── 📁 runtime/            # AtomicOS kernel and runtime  
+│   ├── kernel/            # Core OS kernel
+│   ├── drivers/           # Hardware drivers
+│   └── fs/                # AtomicFS file system
+├── 📁 stdlib/             # Standard library
+│   ├── core/              # Core types and functions
+│   └── system/            # System interfaces
+├── 📁 tools/              # Development tools
+│   └── monitor/           # Observability suite (monitor, debug, profile, logs, alert)
+├── 📁 examples/           # Example programs
+│   ├── basic/             # Simple examples
+│   ├── advanced/          # Complex applications (Doom, orchestrator)
+│   └── benchmarks/        # Performance tests
+├── 📁 docs/               # Documentation
+│   ├── language/          # Language reference
+│   └── tutorials/         # Learning materials
+└── 📁 scripts/            # Installation and build scripts
+```
+
+## 📦 Installation
+
+### Quick Start
+
+```bash
+# 1. Clone repository
+git clone https://github.com/username/tempo-lang.git
+cd tempo-lang
+
+# 2. Global installation (recommended)
+sudo ./scripts/install-global.sh
+
+# 3. Verify installation  
+tempo --version
+
+# 4. Start monitoring ecosystem
+tempo monitor
+```
+
+### Development Setup
+
+```bash
+# Local development installation
+./scripts/install.sh
+
+# Build compiler from source
+cd compiler/platforms/macos && ./build.sh
+```
+
+### ✅ Después de la Instalación
+- `tempo` está disponible desde cualquier directorio
+- Manual disponible: `man tempo`
+- Ejemplos en: `/usr/local/share/tempo/examples/`
+- Documentación en: `/usr/local/share/doc/tempo/`
+
+## 🎯 Para Diferentes Tipos de Usuario
 
 <table>
 <tr>
 <td width="33%" align="center">
 
-### 🌱 **New to Programming?**
+### 👨‍💻 **Desarrolladores**
 
-**Start here if this is your first language**
+**Aplicaciones ultra-rápidas y seguras**
 
-[**→ Beginner Guide**](#beginners-start-here)
+[**→ Guía de Desarrollo**](#desarrollo-con-tempo)
 
-Learn programming with a language that won't let you make dangerous mistakes.
-
-</td>
-<td width="33%" align="center">
-
-### 🔄 **Evaluating Tempo?**
-
-**Coming from Python, Rust, Go, C++?**
-
-[**→ Quick Evaluation**](#quick-evaluation)
-
-See if Tempo fits your use case with practical examples and migration guides.
+WCET guarantees, optimizaciones automáticas, sin crashes por memory safety.
 
 </td>
 <td width="33%" align="center">
 
-### 🛠️ **Want to Contribute?**
+### 🔧 **Ingenieros de Sistemas**
+
+**Control total del hardware**
+
+[**→ Programación de Sistemas**](#sistemas-con-tempo)
+
+Inline assembly, control de memoria, timing predecible, zero overhead.
+
+</td>
+<td width="33%" align="center">
+
+### 🏢 **SRE y DevOps**
+
+**Sistemas críticos estables**
+
+[**→ Herramientas de Observabilidad**](#observabilidad-sre)
 
 **Help make Tempo better**
 
@@ -68,38 +145,36 @@ Join the community building the future of deterministic computing.
 ### Step 1: Get Tempo Running
 
 ```bash
-# On macOS
-brew install nasm
+# Quick install (macOS/Linux)
 git clone https://github.com/ipenas-cl/Tempo-Lang
 cd Tempo-Lang
-./build.sh
+./install.sh
 
-# On Linux  
-sudo apt-get install nasm
-git clone https://github.com/ipenas-cl/Tempo-Lang
-cd Tempo-Lang
-./build.sh
+# Add to PATH (add to ~/.bashrc or ~/.zshrc)
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### Step 2: Your First Program
 
-Create a file called `my-first-program.tempo`:
+Create a file called `hello.tempo`:
 
 ```tempo
 fn main() -> i32 {
-    print_line("Hello! I'm learning Tempo!");
+    print_line("Hello from Tempo!");
     return 0;
 }
 ```
 
-### Step 3: Run It
+### Step 3: Compile and Run
 
 ```bash
-bin/tempo my-first-program.tempo
-./stage1
+tempo hello.tempo
+./hello.tempo.app
 ```
 
-**You'll see:** `Hello! I'm learning Tempo!`
+**Output:** `Hello from Tempo!`
+
+💡 **Note**: Each `.tempo` file compiles to its own `.tempo.app` executable.
 
 ### 🎓 Learning Path for Beginners
 
@@ -478,10 +553,11 @@ fn process_data(data: Vec<u8>) -> Result<String, Error> {
 
 ## Documentation
 
-- **📖 [Language Reference](docs/language/)** - Complete syntax and semantics
-- **🎓 [Learning Guide](docs/learn/)** - Step-by-step tutorials
-- **⚡ [Performance Guide](docs/performance/)** - Optimization techniques
-- **🏗️ [API Reference](docs/api/)** - Standard library documentation
+- **📖 [Language Reference](docs/tempcore_manual.md)** - Complete syntax and semantics
+- **🎓 [Learning Guide](docs/learn/)** - Step-by-step tutorials for beginners
+- **📚 [Compiler Course](docs/course/)** - 27-lesson course on building compilers
+- **🚀 [Showcase Examples](examples/showcase/)** - Redis-killer, nginx-destroyer benchmarks
+- **🔧 [Advanced Examples](examples/advanced/)** - DOOM port, container orchestrator
 - **🧠 [Philosophy](docs/philosophy/)** - Why Tempo exists
 
 ---
@@ -501,3 +577,179 @@ MIT License - see [LICENSE](LICENSE) for details.
 [🚀 **Get Started**](#-choose-your-path) • [⭐ **Star on GitHub**](https://github.com/ipenas-cl/Tempo-Lang) • [💬 **Join Community**](https://github.com/ipenas-cl/Tempo-Lang/discussions)
 
 </div>
+
+---
+
+## 👨‍💻 Desarrollo con Tempo
+
+### Primeros Pasos para Desarrolladores
+
+```bash
+# Crear tu primera aplicación
+echo 'fn main() -> i32 {
+    print_line("¡Hola Tempo\!");
+    return 0;
+}' > mi_app.tempo
+
+# Compilar
+tempo mi_app.tempo
+
+# Ejecutar
+./tempo.app
+```
+
+### Características para Desarrolladores
+
+#### 🎯 WCET (Worst-Case Execution Time)
+```tempo
+@wcet(1000)  // Garantiza que nunca tomará más de 1000 ciclos
+fn process_payment(amount: i64) -> bool {
+    // Tu lógica aquí con timing predecible
+    return validate_and_process(amount);
+}
+```
+
+#### ⚡ Performance Automático
+```tempo
+@simd  // Vectorización SIMD automática
+fn multiply_arrays(a: [f32; 1000], b: [f32; 1000]) -> [f32; 1000] {
+    @vectorize(16)  // Procesa 16 elementos en paralelo
+    for i in 0..1000 {
+        result[i] = a[i] * b[i];
+    }
+    return result;
+}
+```
+
+#### 🔒 Memory Safety sin Overhead
+```tempo
+fn safe_array_access(data: [i32; 100], index: usize) -> i32 {
+    // Bounds checking en compile-time, zero runtime overhead
+    return data[index];  // Nunca puede hacer segfault
+}
+```
+
+---
+
+## 🔧 Sistemas con Tempo
+
+### Control de Hardware Directo
+
+```tempo
+@interrupt  // Handler de interrupción
+@naked      // Sin prólogo/epílogo de función
+fn timer_interrupt() {
+    @asm("cli")          // Deshabilitar interrupciones
+    handle_timer_tick();
+    @asm("sti")          // Rehabilitar interrupciones
+    @asm("iretq")        // Retorno de interrupción
+}
+```
+
+### Programación de Sistemas de Bajo Nivel
+
+```tempo
+@section("kernel_code")  // Ubicación específica en memoria
+@align(4096)            // Alineado a página
+struct KernelPage {
+    @atomic counter: u64,
+    @packed data: [u8; 4088]  // Sin padding
+}
+
+@wcet(50)  // Máximo 50 ciclos - crítico para scheduler
+fn context_switch(old_task: *Task, new_task: *Task) {
+    @asm("mov %rsp, (%rdi)")     // Guardar stack pointer
+    @asm("mov (%rsi), %rsp")     // Cargar nuevo stack
+    @asm("jmp *8(%rsi)")         // Saltar a nueva tarea
+}
+```
+
+---
+
+## 🏢 Observabilidad SRE
+
+### Herramientas de Monitoreo Profesional
+
+#### 📊 Tempo Monitor - Dashboard Interactivo
+```bash
+tempo monitor
+```
+**Características:**
+- 🔄 **Actualización en tiempo real** (cada 2 segundos)
+- 🎯 **Filtrado ecosistémico**: Solo muestra apps Tempo y servicios relacionados
+- 📈 **Métricas por tipo**: Apps (WCET estricto), DBs, Web servers, Microservicios
+- ⌨️ **Controles interactivos**: `d` debug, `p` profile, `l` logs, `a` alert, `q` quit
+- 🚦 **Estados visuales**: ✅ HEALTHY → 🟡 MODERATE → 🔴 WCET_VIOL
+
+#### 🐛 Debugging Avanzado con WCET
+```bash
+tempo debug payment-service.tempo.app
+```
+- Análisis WCET en tiempo real
+- Inspección de memoria y registros
+- Breakpoints y watchpoints
+- Stack trace con timing
+
+#### 📋 Logs Inteligentes con Context
+```bash
+tempo logs user-management.tempo.app
+```
+- Análisis automático de patrones
+- Detección de anomalías
+- Correlación de eventos
+- Recomendaciones basadas en ML
+
+#### 🚨 Alertas Contextuales Inteligentes
+```bash
+tempo alert "High CPU usage in payment service"
+```
+- Severidad automática (INFO/WARNING/CRITICAL)
+- Contexto del sistema incluido
+- Recomendaciones específicas
+- Integración con Slack/PagerDuty
+
+#### 🔬 Profiling para PGO
+```bash
+tempo profile api-gateway.tempo.app
+```
+- Genera datos para Profile-Guided Optimization
+- Identifica hot paths y bottlenecks
+- Sugiere optimizaciones SIMD
+- Exporta archivo `tempo.pgo`
+
+---
+
+## 🎯 Instalación en Producción
+
+### Para Administradores de Sistema
+
+```bash
+# Instalación global recomendada
+sudo ./install-global.sh
+
+# Verificar instalación
+tempo --version
+man tempo  # Manual completo disponible
+
+# Configurar monitoreo automático
+systemctl enable tempo-monitor
+```
+
+### Integración CI/CD
+
+```yaml
+# .github/workflows/tempo.yml
+- name: Install Tempo
+  run: sudo ./install-global.sh
+
+- name: Compile with WCET verification
+  run: tempo --verify-wcet src/main.tempo
+
+- name: Run performance benchmarks
+  run: tempo profile build/app.tempo
+```
+
+---
+
+*🏆 AtomicOS Ecosystem: Determinismo ✅ Seguridad ✅ Estabilidad ✅ Performance ✅*
+EOF < /dev/null

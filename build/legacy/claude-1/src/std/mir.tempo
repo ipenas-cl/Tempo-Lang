@@ -1,0 +1,269 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Mid-level Intermediate Representation for Stage2 compiler
+// Designed for optimization while preserving WCET guarantees
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+module mir {
+    // MIR instruction set - simplified for deterministic analysis
+    enum MirInst {
+        // Constants and moves
+        LoadConst(reg: u32, value: i64),
+        Move(dst: u32, src: u32),
+        
+        // Arithmetic (all bounded operations)
+        Add(dst: u32, src1: u32, src2: u32),
+        Sub(dst: u32, src1: u32, src2: u32),
+        Mul(dst: u32, src1: u32, src2: u32),
+        Div(dst: u32, src1: u32, src2: u32),  // Bounded division
+        Mod(dst: u32, src1: u32, src2: u32),
+        
+        // Bitwise operations
+        And(dst: u32, src1: u32, src2: u32),
+        Or(dst: u32, src1: u32, src2: u32),
+        Xor(dst: u32, src1: u32, src2: u32),
+        Not(dst: u32, src: u32),
+        Shl(dst: u32, src: u32, amount: u32),
+        Shr(dst: u32, src: u32, amount: u32),
+        
+        // Comparison
+        Eq(dst: u32, src1: u32, src2: u32),
+        Ne(dst: u32, src1: u32, src2: u32),
+        Lt(dst: u32, src1: u32, src2: u32),
+        Le(dst: u32, src1: u32, src2: u32),
+        Gt(dst: u32, src1: u32, src2: u32),
+        Ge(dst: u32, src1: u32, src2: u32),
+        
+        // Control flow
+        Jump(block: u32),
+        JumpIf(cond: u32, true_block: u32, false_block: u32),
+        Call(dst: u32, func: u32, args: Vec<u32>),
+        Return(value: Option<u32>),
+        
+        // Memory operations (bounded)
+        Load(dst: u32, addr: u32, size: u32),
+        Store(addr: u32, value: u32, size: u32),
+        
+        // Stack operations
+        Push(value: u32),
+        Pop(dst: u32),
+        
+        // Real-time specific
+        GetTime(dst: u32),
+        CheckDeadline(deadline: u32),
+        
+        // Phi nodes for SSA form
+        Phi(dst: u32, sources: Vec<(u32, u32)>), // (block_id, value)
+    }
+    
+    // Basic block structure
+    struct BasicBlock {
+        id: u32,
+        instructions: Vec<MirInst>,
+        predecessors: Vec<u32>,
+        successors: Vec<u32>,
+        // WCET information
+        wcet_cycles: u64,
+        loop_bound: Option<u32>,  // Max iterations if this is a loop header
+    }
+    
+    // Function representation in MIR
+    struct MirFunction {
+        name: String,
+        params: Vec<MirType>,
+        return_type: Option<MirType>,
+        locals: Vec<MirType>,
+        blocks: Vec<BasicBlock>,
+        entry_block: u32,
+        // WCET annotations
+        wcet_bound: Option<u64>,
+        stack_bound: Option<u32>,
+    }
+    
+    // Type system for MIR
+    enum MirType {
+        I8, I16, I32, I64,
+        U8, U16, U32, U64,
+        F32, F64,
+        Bool,
+        Ptr(Box<MirType>),
+        Array(Box<MirType>, u32),
+        Struct(Vec<MirType>),
+    }
+    
+    // Value representation for constant propagation
+    enum MirValue {
+        Const(i64),
+        Float(f64),
+        Bool(bool),
+        Undef,
+        Unknown,
+    }
+    
+    // Program representation
+    struct MirProgram {
+        functions: Vec<MirFunction>,
+        globals: Vec<(String, MirType, Option<MirValue>)>,
+        // Real-time constraints
+        max_stack_size: u32,
+        max_heap_size: u32,
+        wcet_deadline: u64,
+    }
+    
+    // Builder for constructing MIR
+    struct MirBuilder {
+        current_function: Option<usize>,
+        current_block: Option<usize>,
+        next_reg: u32,
+        next_block_id: u32,
+    }
+    
+    impl MirBuilder {
+        fn new() -> Self {
+            MirBuilder {
+                current_function: None,
+                current_block: None,
+                next_reg: 0,
+                next_block_id: 0,
+            }
+        }
+        
+        fn new_function(&mut self, name: String, params: Vec<MirType>, return_type: Option<MirType>) -> usize {
+            let func = MirFunction {
+                name,
+                params,
+                return_type,
+                locals: Vec::new(),
+                blocks: Vec::new(),
+                entry_block: 0,
+                wcet_bound: None,
+                stack_bound: None,
+            };
+            // Function index would be added to program
+            0 // Placeholder
+        }
+        
+        fn new_block(&mut self) -> u32 {
+            let id = self.next_block_id;
+            self.next_block_id += 1;
+            let block = BasicBlock {
+                id,
+                instructions: Vec::new(),
+                predecessors: Vec::new(),
+                successors: Vec::new(),
+                wcet_cycles: 0,
+                loop_bound: None,
+            };
+            // Block would be added to current function
+            id
+        }
+        
+        fn new_reg(&mut self) -> u32 {
+            let reg = self.next_reg;
+            self.next_reg += 1;
+            reg
+        }
+        
+        fn emit(&mut self, inst: MirInst) {
+            // Add instruction to current block
+        }
+        
+        fn set_terminator(&mut self, inst: MirInst) {
+            // Set block terminator and update CFG
+        }
+    }
+    
+    // Utilities for MIR analysis
+    impl MirFunction {
+        // Check if function has bounded execution time
+        fn is_wcet_safe(&self) -> bool {
+            // All loops have bounds
+            for block in &self.blocks {
+                if self.is_loop_header(block.id) && block.loop_bound.is_none() {
+                    return false;
+                }
+            }
+            // No unbounded recursion (checked elsewhere)
+            // All operations are bounded
+            true
+        }
+        
+        fn is_loop_header(&self, block_id: u32) -> bool {
+            // A block is a loop header if it has a back edge
+            if let Some(block) = self.blocks.iter().find(|b| b.id == block_id) {
+                block.predecessors.iter().any(|&pred| pred >= block_id)
+            } else {
+                false
+            }
+        }
+        
+        // Compute dominance tree for optimization
+        fn compute_dominance(&self) -> Vec<Vec<u32>> {
+            let n = self.blocks.len();
+            let mut dom = vec![vec![false; n]; n];
+            
+            // Entry block dominates itself
+            dom[0][0] = true;
+            
+            // Fixed-point iteration (bounded by CFG structure)
+            let mut changed = true;
+            let mut iterations = 0;
+            let max_iterations = n * n; // Bounded iteration
+            
+            while changed && iterations < max_iterations {
+                changed = false;
+                iterations += 1;
+                
+                for (i, block) in self.blocks.iter().enumerate() {
+                    if i == 0 { continue; } // Skip entry
+                    
+                    // A block is dominated by the intersection of its predecessors' dominators
+                    let mut new_dom = vec![true; n];
+                    for &pred in &block.predecessors {
+                        for j in 0..n {
+                            new_dom[j] = new_dom[j] && dom[pred as usize][j];
+                        }
+                    }
+                    new_dom[i] = true; // Block dominates itself
+                    
+                    if new_dom != dom[i] {
+                        dom[i] = new_dom;
+                        changed = true;
+                    }
+                }
+            }
+            
+            dom
+        }
+    }
+    
+    // SSA construction utilities
+    struct SsaBuilder {
+        dom_tree: Vec<Vec<u32>>,
+        def_sites: Vec<Vec<u32>>, // For each variable, blocks where defined
+        phi_sites: Vec<Vec<u32>>, // For each variable, blocks needing phi
+    }
+    
+    impl SsaBuilder {
+        fn place_phi_nodes(&mut self, func: &MirFunction) {
+            // Implement minimal SSA phi placement
+            // This is deterministic and bounded by CFG structure
+        }
+        
+        fn rename_variables(&mut self, func: &mut MirFunction) {
+            // Rename variables to SSA form
+            // Stack-based renaming with bounded depth
+        }
+    }
+}

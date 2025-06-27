@@ -1,0 +1,48 @@
+// AtomicOS Test Program
+// Demonstrates WCET annotations and deterministic features
+
+@wcet(1000)
+fn deterministic_task() -> i32 {
+    // This function guarantees completion within 1000 cycles
+    @asm("rdtsc")  // Inline assembly for timing
+    let start_time = get_cycle_count();
+    
+    // Deterministic computation
+    let result = 42;
+    
+    @atomic {
+        // Atomic operation block
+        increment_counter(&result);
+    }
+    
+    return result;
+}
+
+@section("fast_memory")
+@align(64)
+struct AtomicCounter {
+    @atomic value: i32,
+    @packed flags: u8
+}
+
+@interrupt
+@naked
+fn timer_handler() {
+    @asm("pushfq")
+    @asm("cli")
+    
+    // Handle timer interrupt with deterministic timing
+    schedule_next_task();
+    
+    @asm("popfq")
+    @asm("iretq")
+}
+
+@wcet(500)
+fn main() -> i32 {
+    print_line("¡AtomicOS con WCET garantizado!");
+    
+    let result = deterministic_task();
+    
+    return result;
+}

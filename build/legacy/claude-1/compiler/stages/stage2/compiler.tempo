@@ -1,0 +1,728 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ████████╗███████╗███╗   ███╗██████╗  ██████╗ 
+//  ╚══██╔══╝██╔════╝████╗ ████║██╔══██╗██╔═══██╗
+//     ██║   █████╗  ██╔████╔██║██████╔╝██║   ██║
+//     ██║   ██╔══╝  ██║╚██╔╝██║██╔═══╝ ██║   ██║
+//     ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝
+//     ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝ 
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 2 Tempo Compiler - Complete self-hosting compiler with advanced optimizations
+// The final stage of the Tempo bootstrap process
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+//
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+// Compiler configuration
+struct CompilerConfig {
+    input_file: String,
+    output_file: String,
+    target_platform: TargetPlatform,
+    optimization_level: OptimizationLevel,
+    
+    // Compilation phases
+    emit_ast: bool,
+    emit_ir: bool,
+    emit_assembly: bool,
+    emit_object: bool,
+    
+    // Determinism settings
+    deterministic_compilation: bool,
+    wcet_analysis: bool,
+    verify_determinism: bool,
+    
+    // Debug and profiling
+    debug_info: bool,
+    profiling_info: bool,
+    verbose: bool,
+    
+    // Advanced features
+    link_executable: bool,
+    run_tests: bool,
+    benchmark_compilation: bool,
+}
+
+// Main compiler structure
+struct TempoCompiler {
+    config: CompilerConfig,
+    
+    // Compilation phases
+    lexer: TempoLexer,
+    parser: TempoParser,
+    semantic_analyzer: SemanticAnalyzer,
+    optimizer: TempoOptimizer,
+    code_generator: TempoCodeGenerator,
+    
+    // Analysis tools
+    wcet_analyzer: WCETAnalyzer,
+    determinism_checker: DeterminismChecker,
+    error_reporter: ErrorReporter,
+    
+    // Statistics
+    compilation_stats: CompilationStatistics,
+}
+
+struct CompilationStatistics {
+    start_time: u64,
+    end_time: u64,
+    
+    // Phase timings
+    lexing_time: Duration,
+    parsing_time: Duration,
+    semantic_analysis_time: Duration,
+    optimization_time: Duration,
+    code_generation_time: Duration,
+    
+    // Code metrics
+    source_lines: u32,
+    tokens_processed: u32,
+    ast_nodes: u32,
+    functions_compiled: u32,
+    optimizations_applied: u32,
+    
+    // WCET analysis
+    total_wcet_cycles: u64,
+    functions_with_wcet_bounds: u32,
+    determinism_verified: bool,
+}
+
+struct CompilationResult {
+    success: bool,
+    output_files: Vec<String>,
+    errors: Vec<CompilerError>,
+    warnings: Vec<CompilerWarning>,
+    statistics: CompilationStatistics,
+    
+    // Analysis results
+    wcet_analysis: Option<WCETAnalysisData>,
+    determinism_report: Option<DeterminismReport>,
+}
+
+impl TempoCompiler {
+    fn new(config: CompilerConfig) -> Result<Self, CompilerError> {
+        // Initialize compiler components based on configuration
+        let lexer = TempoLexer::new();
+        let parser = TempoParser::new();
+        let semantic_analyzer = SemanticAnalyzer::new();
+        
+        let optimizer_config = OptimizerConfig {
+            optimization_level: config.optimization_level,
+            preserve_debug_info: config.debug_info,
+            enable_aggressive_opts: matches!(config.optimization_level, OptimizationLevel::Speed),
+            max_optimization_passes: 20,
+            target_platform: config.target_platform,
+            preserve_wcet_bounds: config.wcet_analysis,
+            maintain_deterministic_order: config.deterministic_compilation,
+            max_wcet_degradation_percent: 10.0,
+        };
+        let optimizer = TempoOptimizer::new(optimizer_config);
+        
+        let codegen_config = CodeGenConfig {
+            target_platform: config.target_platform,
+            optimization_level: config.optimization_level,
+            debug_info: config.debug_info,
+            generate_wcet_annotations: config.wcet_analysis,
+            deterministic_codegen: config.deterministic_compilation,
+            register_allocation_strategy: RegisterAllocationStrategy::DeterministicLinearScan,
+            spill_strategy: SpillStrategy::DeterministicRoundRobin,
+            enable_instruction_scheduling: true,
+            schedule_for_wcet: config.wcet_analysis,
+            stack_alignment: 16,
+            data_alignment: 8,
+            code_alignment: 16,
+        };
+        let code_generator = TempoCodeGenerator::new(codegen_config);
+        
+        Ok(TempoCompiler {
+            config,
+            lexer,
+            parser,
+            semantic_analyzer,
+            optimizer,
+            code_generator,
+            wcet_analyzer: WCETAnalyzer::new(),
+            determinism_checker: DeterminismChecker::new(),
+            error_reporter: ErrorReporter::new(),
+            compilation_stats: CompilationStatistics::new(),
+        })
+    }
+    
+    fn compile(&mut self) -> Result<CompilationResult, CompilerError> {
+        self.compilation_stats.start_time = get_time_ns();
+        
+        if self.config.verbose {
+            print_line("🚀 Starting Tempo Stage 2 compilation...");
+            print_line(&format!("  Input: {}", self.config.input_file));
+            print_line(&format!("  Output: {}", self.config.output_file));
+            print_line(&format!("  Target: {:?}", self.config.target_platform));
+            print_line(&format!("  Optimization: {:?}", self.config.optimization_level));
+        }
+        
+        // Phase 1: Lexical Analysis
+        let tokens = self.lexical_analysis()?;
+        
+        // Phase 2: Parsing
+        let ast = self.parsing(&tokens)?;
+        
+        // Phase 3: Semantic Analysis
+        let analyzed_ast = self.semantic_analysis(ast)?;
+        
+        // Phase 4: Optimization
+        let optimized_ast = self.optimization(analyzed_ast)?;
+        
+        // Phase 5: Code Generation
+        let generated_code = self.code_generation(&optimized_ast)?;
+        
+        // Phase 6: Final Assembly and Linking
+        let output_files = self.assembly_and_linking(&generated_code)?;
+        
+        // Phase 7: Verification (if enabled)
+        let verification_results = if self.config.verify_determinism {
+            Some(self.verify_compilation_determinism(&generated_code)?)
+        } else {
+            None
+        };
+        
+        self.compilation_stats.end_time = get_time_ns();
+        
+        if self.config.verbose {
+            self.print_compilation_statistics();
+        }
+        
+        Ok(CompilationResult {
+            success: true,
+            output_files,
+            errors: self.error_reporter.get_errors(),
+            warnings: self.error_reporter.get_warnings(),
+            statistics: self.compilation_stats.clone(),
+            wcet_analysis: if self.config.wcet_analysis { 
+                Some(generated_code.wcet_data) 
+            } else { 
+                None 
+            },
+            determinism_report: verification_results,
+        })
+    }
+    
+    fn lexical_analysis(&mut self) -> Result<Vec<Token>, CompilerError> {
+        if self.config.verbose {
+            print_line("📝 Phase 1: Lexical Analysis");
+        }
+        
+        let start_time = get_time_ns();
+        
+        // Read source file
+        let source_code = read_file(&self.config.input_file)
+            .map_err(|e| CompilerError::FileReadError(self.config.input_file.clone(), e))?;
+        
+        self.compilation_stats.source_lines = source_code.lines().count() as u32;
+        
+        // Tokenize
+        let tokens = self.lexer.tokenize(&source_code)
+            .map_err(|e| CompilerError::LexicalError(e))?;
+        
+        self.compilation_stats.tokens_processed = tokens.len() as u32;
+        self.compilation_stats.lexing_time = Duration::from_nanos(get_time_ns() - start_time);
+        
+        if self.config.verbose {
+            print_line(&format!("  ✓ Tokenized {} lines into {} tokens", 
+                              self.compilation_stats.source_lines, 
+                              self.compilation_stats.tokens_processed));
+        }
+        
+        Ok(tokens)
+    }
+    
+    fn parsing(&mut self, tokens: &[Token]) -> Result<AST, CompilerError> {
+        if self.config.verbose {
+            print_line("🌳 Phase 2: Parsing");
+        }
+        
+        let start_time = get_time_ns();
+        
+        let ast = self.parser.parse(tokens)
+            .map_err(|e| CompilerError::ParseError(e))?;
+        
+        self.compilation_stats.ast_nodes = self.count_ast_nodes(&ast);
+        self.compilation_stats.functions_compiled = ast.functions.len() as u32;
+        self.compilation_stats.parsing_time = Duration::from_nanos(get_time_ns() - start_time);
+        
+        // Emit AST if requested
+        if self.config.emit_ast {
+            let ast_file = format!("{}.ast", self.config.output_file);
+            self.emit_ast_file(&ast, &ast_file)?;
+        }
+        
+        if self.config.verbose {
+            print_line(&format!("  ✓ Parsed {} functions into {} AST nodes", 
+                              self.compilation_stats.functions_compiled,
+                              self.compilation_stats.ast_nodes));
+        }
+        
+        Ok(ast)
+    }
+    
+    fn semantic_analysis(&mut self, ast: AST) -> Result<AST, CompilerError> {
+        if self.config.verbose {
+            print_line("🔍 Phase 3: Semantic Analysis");
+        }
+        
+        let start_time = get_time_ns();
+        
+        // Type checking
+        let type_checked_ast = self.semantic_analyzer.type_check(ast)
+            .map_err(|e| CompilerError::SemanticError(e))?;
+        
+        // WCET analysis (if enabled)
+        if self.config.wcet_analysis {
+            let wcet_results = self.wcet_analyzer.analyze_ast(&type_checked_ast)
+                .map_err(|e| CompilerError::WCETAnalysisError(e))?;
+            
+            self.compilation_stats.total_wcet_cycles = wcet_results.total_program_wcet;
+            self.compilation_stats.functions_with_wcet_bounds = wcet_results.function_bounds.len() as u32;
+            
+            if self.config.verbose {
+                print_line(&format!("  ✓ WCET Analysis: {} total cycles, {} functions bounded",
+                                  self.compilation_stats.total_wcet_cycles,
+                                  self.compilation_stats.functions_with_wcet_bounds));
+            }
+        }
+        
+        // Determinism checking (if enabled)
+        if self.config.deterministic_compilation {
+            let determinism_results = self.determinism_checker.check_determinism(&type_checked_ast)
+                .map_err(|e| CompilerError::DeterminismError(e))?;
+            
+            self.compilation_stats.determinism_verified = determinism_results.is_deterministic;
+            
+            if !determinism_results.is_deterministic {
+                for violation in &determinism_results.violations {
+                    self.error_reporter.add_warning(CompilerWarning::DeterminismViolation(violation.clone()));
+                }
+            }
+        }
+        
+        self.compilation_stats.semantic_analysis_time = Duration::from_nanos(get_time_ns() - start_time);
+        
+        if self.config.verbose {
+            print_line("  ✓ Semantic analysis complete");
+        }
+        
+        Ok(type_checked_ast)
+    }
+    
+    fn optimization(&mut self, ast: AST) -> Result<OptimizedAST, CompilerError> {
+        if self.config.verbose {
+            print_line("⚡ Phase 4: Optimization");
+        }
+        
+        let start_time = get_time_ns();
+        
+        let optimized_ast = self.optimizer.optimize(ast)
+            .map_err(|e| CompilerError::OptimizationError(e))?;
+        
+        self.compilation_stats.optimizations_applied = optimized_ast.optimization_metadata.modifications_made;
+        self.compilation_stats.optimization_time = Duration::from_nanos(get_time_ns() - start_time);
+        
+        // Emit IR if requested
+        if self.config.emit_ir {
+            let ir_file = format!("{}.ir", self.config.output_file);
+            self.emit_ir_file(&optimized_ast, &ir_file)?;
+        }
+        
+        if self.config.verbose {
+            print_line(&format!("  ✓ Applied {} optimizations in {} passes",
+                              self.compilation_stats.optimizations_applied,
+                              optimized_ast.optimization_metadata.passes_run));
+        }
+        
+        Ok(optimized_ast)
+    }
+    
+    fn code_generation(&mut self, optimized_ast: &OptimizedAST) -> Result<GeneratedCode, CompilerError> {
+        if self.config.verbose {
+            print_line("🔧 Phase 5: Code Generation");
+        }
+        
+        let start_time = get_time_ns();
+        
+        let generated_code = self.code_generator.generate_code(optimized_ast)
+            .map_err(|e| CompilerError::CodeGenerationError(e))?;
+        
+        self.compilation_stats.code_generation_time = Duration::from_nanos(get_time_ns() - start_time);
+        
+        // Emit assembly if requested
+        if self.config.emit_assembly {
+            let asm_file = format!("{}.s", self.config.output_file);
+            write_file(&asm_file, &generated_code.assembly)?;
+            
+            if self.config.verbose {
+                print_line(&format!("  ✓ Assembly written to {}", asm_file));
+            }
+        }
+        
+        if self.config.verbose {
+            print_line("  ✓ Code generation complete");
+        }
+        
+        Ok(generated_code)
+    }
+    
+    fn assembly_and_linking(&mut self, generated_code: &GeneratedCode) -> Result<Vec<String>, CompilerError> {
+        if self.config.verbose {
+            print_line("🔗 Phase 6: Assembly and Linking");
+        }
+        
+        let mut output_files = Vec::new();
+        
+        // Write assembly to file
+        let asm_file = format!("{}.s", self.config.output_file);
+        write_file(&asm_file, &generated_code.assembly)?;
+        output_files.push(asm_file.clone());
+        
+        // Assemble to object file
+        if self.config.emit_object || self.config.link_executable {
+            let obj_file = format!("{}.o", self.config.output_file);
+            self.run_assembler(&asm_file, &obj_file)?;
+            output_files.push(obj_file.clone());
+            
+            if self.config.verbose {
+                print_line(&format!("  ✓ Object file: {}", obj_file));
+            }
+            
+            // Link executable
+            if self.config.link_executable {
+                let exe_file = self.config.output_file.clone();
+                self.run_linker(&obj_file, &exe_file)?;
+                output_files.push(exe_file.clone());
+                
+                if self.config.verbose {
+                    print_line(&format!("  ✓ Executable: {}", exe_file));
+                }
+            }
+        }
+        
+        Ok(output_files)
+    }
+    
+    fn verify_compilation_determinism(&mut self, generated_code: &GeneratedCode) -> Result<DeterminismReport, CompilerError> {
+        if self.config.verbose {
+            print_line("🔍 Phase 7: Determinism Verification");
+        }
+        
+        // Recompile and compare results
+        let verification_result = self.determinism_checker.verify_compilation_determinism(
+            &self.config.input_file,
+            generated_code
+        )?;
+        
+        if verification_result.is_deterministic {
+            if self.config.verbose {
+                print_line("  ✓ Compilation determinism verified");
+            }
+        } else {
+            if self.config.verbose {
+                print_line("  ⚠ Compilation determinism issues detected");
+            }
+        }
+        
+        Ok(verification_result)
+    }
+    
+    fn run_assembler(&self, asm_file: &str, obj_file: &str) -> Result<(), CompilerError> {
+        match self.config.target_platform {
+            TargetPlatform::X86_64_Linux => {
+                let result = run_command(&format!("as --64 {} -o {}", asm_file, obj_file))?;
+                if !result.success {
+                    return Err(CompilerError::AssemblerError(result.stderr));
+                }
+            },
+            TargetPlatform::ARM64_Linux => {
+                let result = run_command(&format!("aarch64-linux-gnu-as {} -o {}", asm_file, obj_file))?;
+                if !result.success {
+                    return Err(CompilerError::AssemblerError(result.stderr));
+                }
+            },
+            TargetPlatform::TempoCore => {
+                // Use custom TempoCore assembler
+                let result = run_command(&format!("tempo-as {} -o {}", asm_file, obj_file))?;
+                if !result.success {
+                    return Err(CompilerError::AssemblerError(result.stderr));
+                }
+            },
+            _ => return Err(CompilerError::UnsupportedTarget(self.config.target_platform)),
+        }
+        
+        Ok(())
+    }
+    
+    fn run_linker(&self, obj_file: &str, exe_file: &str) -> Result<(), CompilerError> {
+        match self.config.target_platform {
+            TargetPlatform::X86_64_Linux => {
+                let result = run_command(&format!("ld {} -o {}", obj_file, exe_file))?;
+                if !result.success {
+                    return Err(CompilerError::LinkerError(result.stderr));
+                }
+            },
+            TargetPlatform::ARM64_Linux => {
+                let result = run_command(&format!("aarch64-linux-gnu-ld {} -o {}", obj_file, exe_file))?;
+                if !result.success {
+                    return Err(CompilerError::LinkerError(result.stderr));
+                }
+            },
+            TargetPlatform::TempoCore => {
+                // Use custom TempoCore linker
+                let result = run_command(&format!("tempo-ld {} -o {}", obj_file, exe_file))?;
+                if !result.success {
+                    return Err(CompilerError::LinkerError(result.stderr));
+                }
+            },
+            _ => return Err(CompilerError::UnsupportedTarget(self.config.target_platform)),
+        }
+        
+        Ok(())
+    }
+    
+    fn print_compilation_statistics(&self) {
+        let total_time = self.compilation_stats.end_time - self.compilation_stats.start_time;
+        
+        print_line("\n📊 Compilation Statistics:");
+        print_line(&format!("  Total time: {:.2}ms", total_time as f64 / 1_000_000.0));
+        print_line(&format!("  Source lines: {}", self.compilation_stats.source_lines));
+        print_line(&format!("  Tokens: {}", self.compilation_stats.tokens_processed));
+        print_line(&format!("  AST nodes: {}", self.compilation_stats.ast_nodes));
+        print_line(&format!("  Functions: {}", self.compilation_stats.functions_compiled));
+        print_line(&format!("  Optimizations: {}", self.compilation_stats.optimizations_applied));
+        
+        if self.config.wcet_analysis {
+            print_line(&format!("  Total WCET: {} cycles", self.compilation_stats.total_wcet_cycles));
+            print_line(&format!("  Functions with bounds: {}", self.compilation_stats.functions_with_wcet_bounds));
+        }
+        
+        if self.config.deterministic_compilation {
+            if self.compilation_stats.determinism_verified {
+                print_line("  ✓ Determinism verified");
+            } else {
+                print_line("  ⚠ Determinism issues detected");
+            }
+        }
+        
+        print_line("\n⏱ Phase Timings:");
+        print_line(&format!("  Lexing: {:.2}ms", self.compilation_stats.lexing_time.as_nanos() as f64 / 1_000_000.0));
+        print_line(&format!("  Parsing: {:.2}ms", self.compilation_stats.parsing_time.as_nanos() as f64 / 1_000_000.0));
+        print_line(&format!("  Semantic: {:.2}ms", self.compilation_stats.semantic_analysis_time.as_nanos() as f64 / 1_000_000.0));
+        print_line(&format!("  Optimization: {:.2}ms", self.compilation_stats.optimization_time.as_nanos() as f64 / 1_000_000.0));
+        print_line(&format!("  Codegen: {:.2}ms", self.compilation_stats.code_generation_time.as_nanos() as f64 / 1_000_000.0));
+    }
+    
+    fn count_ast_nodes(&self, ast: &AST) -> u32 {
+        let mut count = 0u32;
+        
+        // Count global declarations
+        count += ast.global_variables.len() as u32;
+        count += ast.structs.len() as u32;
+        count += ast.enums.len() as u32;
+        count += ast.functions.len() as u32;
+        
+        // Count nodes in functions
+        for function in &ast.functions {
+            count += self.count_block_nodes(&function.body);
+        }
+        
+        count
+    }
+    
+    fn count_block_nodes(&self, block: &Block) -> u32 {
+        let mut count = 1u32; // Count the block itself
+        
+        for statement in &block.statements {
+            count += self.count_statement_nodes(statement);
+        }
+        
+        count
+    }
+    
+    fn count_statement_nodes(&self, statement: &Statement) -> u32 {
+        match statement {
+            Statement::VariableDeclaration(_) => 1,
+            Statement::Assignment(_) => 1,
+            Statement::Expression(expr) => self.count_expression_nodes(expr),
+            Statement::If(if_stmt) => {
+                let mut count = 1;
+                count += self.count_expression_nodes(&if_stmt.condition);
+                count += self.count_block_nodes(&if_stmt.then_block);
+                if let Some(else_block) = &if_stmt.else_block {
+                    count += self.count_block_nodes(else_block);
+                }
+                count
+            },
+            Statement::While(while_stmt) => {
+                1 + self.count_expression_nodes(&while_stmt.condition) + 
+                self.count_block_nodes(&while_stmt.body)
+            },
+            Statement::For(for_stmt) => {
+                1 + self.count_block_nodes(&for_stmt.body)
+            },
+            Statement::Return(_) => 1,
+            Statement::Break => 1,
+            Statement::Continue => 1,
+        }
+    }
+    
+    fn count_expression_nodes(&self, expression: &Expression) -> u32 {
+        match expression {
+            Expression::Literal(_) => 1,
+            Expression::Variable(_) => 1,
+            Expression::BinaryOp(binary_op) => {
+                1 + self.count_expression_nodes(&binary_op.left) + 
+                self.count_expression_nodes(&binary_op.right)
+            },
+            Expression::UnaryOp(unary_op) => {
+                1 + self.count_expression_nodes(&unary_op.operand)
+            },
+            Expression::FunctionCall(call) => {
+                1 + call.arguments.iter().map(|arg| self.count_expression_nodes(arg)).sum::<u32>()
+            },
+            Expression::ArrayAccess(_) => 1,
+            Expression::FieldAccess(_) => 1,
+        }
+    }
+}
+
+// Command line interface
+fn parse_command_line_args(args: &[String]) -> Result<CompilerConfig, String> {
+    if args.len() < 2 {
+        return Err("Usage: tempo-compiler <input.tempo> [options]".to_string());
+    }
+    
+    let mut config = CompilerConfig {
+        input_file: args[1].clone(),
+        output_file: "output".to_string(),
+        target_platform: TargetPlatform::X86_64_Linux,
+        optimization_level: OptimizationLevel::Balanced,
+        emit_ast: false,
+        emit_ir: false,
+        emit_assembly: false,
+        emit_object: false,
+        deterministic_compilation: true,
+        wcet_analysis: true,
+        verify_determinism: false,
+        debug_info: false,
+        profiling_info: false,
+        verbose: false,
+        link_executable: true,
+        run_tests: false,
+        benchmark_compilation: false,
+    };
+    
+    // Parse command line options
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => {
+                if i + 1 < args.len() {
+                    config.output_file = args[i + 1].clone();
+                    i += 2;
+                } else {
+                    return Err("Missing output file after -o".to_string());
+                }
+            },
+            "--target" => {
+                if i + 1 < args.len() {
+                    config.target_platform = match args[i + 1].as_str() {
+                        "x86_64-linux" => TargetPlatform::X86_64_Linux,
+                        "x86_64-windows" => TargetPlatform::X86_64_Windows,
+                        "arm64-linux" => TargetPlatform::ARM64_Linux,
+                        "riscv64" => TargetPlatform::RISC_V_64,
+                        "tempocore" => TargetPlatform::TempoCore,
+                        _ => return Err(format!("Unknown target: {}", args[i + 1])),
+                    };
+                    i += 2;
+                } else {
+                    return Err("Missing target after --target".to_string());
+                }
+            },
+            "-O0" => { config.optimization_level = OptimizationLevel::Debug; i += 1; },
+            "-Os" => { config.optimization_level = OptimizationLevel::Size; i += 1; },
+            "-O2" => { config.optimization_level = OptimizationLevel::Speed; i += 1; },
+            "-Ow" => { config.optimization_level = OptimizationLevel::Wcet; i += 1; },
+            "-O1" | "-O" => { config.optimization_level = OptimizationLevel::Balanced; i += 1; },
+            "--emit-ast" => { config.emit_ast = true; i += 1; },
+            "--emit-ir" => { config.emit_ir = true; i += 1; },
+            "--emit-asm" => { config.emit_assembly = true; i += 1; },
+            "-c" => { config.emit_object = true; config.link_executable = false; i += 1; },
+            "-g" => { config.debug_info = true; i += 1; },
+            "-v" | "--verbose" => { config.verbose = true; i += 1; },
+            "--no-deterministic" => { config.deterministic_compilation = false; i += 1; },
+            "--no-wcet" => { config.wcet_analysis = false; i += 1; },
+            "--verify-determinism" => { config.verify_determinism = true; i += 1; },
+            "--benchmark" => { config.benchmark_compilation = true; i += 1; },
+            _ => return Err(format!("Unknown option: {}", args[i])),
+        }
+    }
+    
+    Ok(config)
+}
+
+fn main() -> Result<(), String> {
+    print_line("═══════════════════════════════════════════════════════════════════════════");
+    print_line(" ████████╗███████╗███╗   ███╗██████╗  ██████╗ ");
+    print_line(" ╚══██╔══╝██╔════╝████╗ ████║██╔══██╗██╔═══██╗");
+    print_line("    ██║   █████╗  ██╔████╔██║██████╔╝██║   ██║");
+    print_line("    ██║   ██╔══╝  ██║╚██╔╝██║██╔═══╝ ██║   ██║");
+    print_line("    ██║   ███████╗██║ ╚═╝ ██║██║     ╚██████╔╝");
+    print_line("    ╚═╝   ╚══════╝╚═╝     ╚═╝╚═╝      ╚═════╝ ");
+    print_line("═══════════════════════════════════════════════════════════════════════════");
+    print_line("🚀 Tempo Stage 2 Compiler v2.0");
+    print_line("Self-hosting deterministic compiler with WCET guarantees");
+    print_line("Author: Ignacio Peña Sepúlveda | Date: June 25, 2025");
+    print_line("═══════════════════════════════════════════════════════════════════════════");
+    
+    // Parse command line arguments
+    let args: Vec<String> = get_args();
+    let config = parse_command_line_args(&args)?;
+    
+    // Initialize compiler
+    let mut compiler = TempoCompiler::new(config)
+        .map_err(|e| format!("Failed to initialize compiler: {:?}", e))?;
+    
+    // Compile
+    let start_time = get_time_ns();
+    let result = compiler.compile()
+        .map_err(|e| format!("Compilation failed: {:?}", e))?;
+    let total_time = get_time_ns() - start_time;
+    
+    if result.success {
+        print_line(&format!("✅ Compilation successful in {:.2}ms", total_time as f64 / 1_000_000.0));
+        print_line(&format!("📁 Output files: {}", result.output_files.join(", ")));
+        
+        if !result.warnings.is_empty() {
+            print_line(&format!("⚠️  {} warnings", result.warnings.len()));
+        }
+        
+        if let Some(wcet_data) = result.wcet_analysis {
+            print_line(&format!("⏱️  Total WCET: {} cycles", wcet_data.program_wcet));
+        }
+        
+        Ok(())
+    } else {
+        print_line("❌ Compilation failed");
+        for error in &result.errors {
+            print_line(&format!("  Error: {:?}", error));
+        }
+        Err("Compilation failed".to_string())
+    }
+}

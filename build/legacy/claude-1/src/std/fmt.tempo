@@ -1,0 +1,685 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// std/fmt.tempo - Safe printf-style formatting
+// Provides bounded string formatting with type safety
+
+module std::fmt
+
+// Format specifier components
+struct FormatSpec {
+    typ: FormatType
+    width: Option<u32>
+    precision: Option<u32>
+    flags: FormatFlags
+    fill: char
+}
+
+enum FormatType {
+    String
+    Decimal
+    Binary
+    Octal
+    Hex
+    HexUpper
+    Float
+    Exp
+    ExpUpper
+    Char
+    Pointer
+    Bool
+}
+
+struct FormatFlags {
+    left_align: bool
+    show_sign: bool
+    alternate: bool
+    zero_pad: bool
+    space_sign: bool
+}
+
+// Error types
+enum FormatError {
+    InvalidFormat
+    TypeMismatch
+    TooManyArgs
+    TooFewArgs
+    WidthTooLarge
+    PrecisionTooLarge
+}
+
+type Result<T> = union { Ok(T), Err(FormatError) }
+
+// Main formatting functions
+fn sprintf(format: string, args: ...) -> string {
+    let mut builder = strings::builder_new()
+    let result = format_to(&mut builder, format, args)
+    if result.is_err() {
+        return "<format error>"
+    }
+    return strings::builder_to_string(&builder)
+}
+
+fn printf(format: string, args: ...) {
+    let s = sprintf(format, args)
+    @runtime_print(s)
+}
+
+fn fprintf(writer: &mut Writer, format: string, args: ...) -> Result<()> {
+    let s = sprintf(format, args)
+    writer.write(strings::to_bytes(s))?
+    return Ok(())
+}
+
+// Core formatting implementation
+fn format_to(builder: &mut strings::Builder, format: string, args: &[Any]) -> Result<()> {
+    let format_bytes = strings::to_bytes(format)
+    let mut arg_index = 0
+    let mut i = 0
+    
+    while i < format_bytes.len() {
+        if format_bytes[i] == '%' {
+            if i + 1 < format_bytes.len() {
+                if format_bytes[i + 1] == '%' {
+                    // Escaped %
+                    strings::builder_write_char(builder, '%')
+                    i += 2
+                    continue
+                }
+                
+                // Parse format specifier
+                let (spec, consumed) = parse_format_spec(format_bytes, i)?
+                i += consumed
+                
+                // Format the argument
+                if arg_index >= args.len() {
+                    return Err(FormatError::TooFewArgs)
+                }
+                
+                format_arg(builder, &args[arg_index], &spec)?
+                arg_index += 1
+            } else {
+                return Err(FormatError::InvalidFormat)
+            }
+        } else {
+            strings::builder_write_byte(builder, format_bytes[i])
+            i += 1
+        }
+    }
+    
+    if arg_index < args.len() {
+        return Err(FormatError::TooManyArgs)
+    }
+    
+    return Ok(())
+}
+
+// Parse format specifier
+fn parse_format_spec(format: &[u8], start: usize) -> Result<(FormatSpec, usize)> {
+    let mut spec = FormatSpec {
+        typ: FormatType::String,
+        width: None,
+        precision: None,
+        flags: FormatFlags {
+            left_align: false,
+            show_sign: false,
+            alternate: false,
+            zero_pad: false,
+            space_sign: false
+        },
+        fill: ' '
+    }
+    
+    let mut i = start + 1  // Skip the %
+    
+    // Parse flags
+    while i < format.len() {
+        match format[i] {
+            '-' => spec.flags.left_align = true
+            '+' => spec.flags.show_sign = true
+            '#' => spec.flags.alternate = true
+            '0' => {
+                spec.flags.zero_pad = true
+                spec.fill = '0'
+            }
+            ' ' => spec.flags.space_sign = true
+            _ => break
+        }
+        i += 1
+    }
+    
+    // Parse width
+    if i < format.len() && format[i] >= '0' && format[i] <= '9' {
+        let (width, consumed) = parse_number(format, i)?
+        spec.width = Some(width)
+        i += consumed
+    }
+    
+    // Parse precision
+    if i < format.len() && format[i] == '.' {
+        i += 1
+        if i < format.len() && format[i] >= '0' && format[i] <= '9' {
+            let (precision, consumed) = parse_number(format, i)?
+            spec.precision = Some(precision)
+            i += consumed
+        } else {
+            spec.precision = Some(0)
+        }
+    }
+    
+    // Parse type
+    if i < format.len() {
+        spec.typ = match format[i] {
+            's' => FormatType::String
+            'd' | 'i' => FormatType::Decimal
+            'u' => FormatType::Decimal  // Treat as decimal
+            'b' => FormatType::Binary
+            'o' => FormatType::Octal
+            'x' => FormatType::Hex
+            'X' => FormatType::HexUpper
+            'f' | 'F' => FormatType::Float
+            'e' => FormatType::Exp
+            'E' => FormatType::ExpUpper
+            'c' => FormatType::Char
+            'p' => FormatType::Pointer
+            't' => FormatType::Bool
+            _ => return Err(FormatError::InvalidFormat)
+        }
+        i += 1
+    } else {
+        return Err(FormatError::InvalidFormat)
+    }
+    
+    return Ok((spec, i - start))
+}
+
+fn parse_number(format: &[u8], start: usize) -> Result<(u32, usize)> {
+    let mut num: u32 = 0
+    let mut i = start
+    
+    while i < format.len() && format[i] >= '0' && format[i] <= '9' {
+        let digit = (format[i] - '0') as u32
+        if num > (u32::MAX - digit) / 10 {
+            return Err(FormatError::WidthTooLarge)
+        }
+        num = num * 10 + digit
+        i += 1
+    }
+    
+    return Ok((num, i - start))
+}
+
+// Format individual argument
+fn format_arg(builder: &mut strings::Builder, arg: &Any, spec: &FormatSpec) -> Result<()> {
+    let formatted = match spec.typ {
+        FormatType::String => format_string(arg, spec)?
+        FormatType::Decimal => format_decimal(arg, spec)?
+        FormatType::Binary => format_binary(arg, spec)?
+        FormatType::Octal => format_octal(arg, spec)?
+        FormatType::Hex => format_hex(arg, spec, false)?
+        FormatType::HexUpper => format_hex(arg, spec, true)?
+        FormatType::Float => format_float(arg, spec)?
+        FormatType::Exp => format_exp(arg, spec, false)?
+        FormatType::ExpUpper => format_exp(arg, spec, true)?
+        FormatType::Char => format_char(arg, spec)?
+        FormatType::Pointer => format_pointer(arg, spec)?
+        FormatType::Bool => format_bool(arg, spec)?
+    }
+    
+    // Apply width and alignment
+    let result = apply_width_alignment(formatted, spec)
+    strings::builder_write_string(builder, result)
+    
+    return Ok(())
+}
+
+// Type-specific formatters
+fn format_string(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    match arg {
+        String(s) => {
+            if let Some(prec) = spec.precision {
+                // Truncate to precision
+                let bytes = strings::to_bytes(s)
+                let len = min(bytes.len(), prec as usize)
+                return strings::from_bytes(&bytes[..len])
+            }
+            return Ok(s)
+        }
+        _ => return Err(FormatError::TypeMismatch)
+    }
+}
+
+fn format_decimal(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    let mut num: i64
+    let mut is_signed = true
+    
+    match arg {
+        I8(n) => num = n as i64
+        I16(n) => num = n as i64
+        I32(n) => num = n as i64
+        I64(n) => num = n
+        U8(n) => { num = n as i64; is_signed = false }
+        U16(n) => { num = n as i64; is_signed = false }
+        U32(n) => { num = n as i64; is_signed = false }
+        U64(n) => { num = n as i64; is_signed = false }
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let mut result = strings::builder_new()
+    
+    // Handle sign
+    if num < 0 {
+        strings::builder_write_char(&mut result, '-')
+        num = -num
+    } else if is_signed {
+        if spec.flags.show_sign {
+            strings::builder_write_char(&mut result, '+')
+        } else if spec.flags.space_sign {
+            strings::builder_write_char(&mut result, ' ')
+        }
+    }
+    
+    // Convert to string
+    if num == 0 {
+        strings::builder_write_char(&mut result, '0')
+    } else {
+        let mut digits: Vec<char> = vec![]
+        while num > 0 {
+            digits.push(('0' as u32 + (num % 10) as u32) as char)
+            num /= 10
+        }
+        
+        // Write digits in reverse order
+        for i in (0..digits.len()).rev() {
+            strings::builder_write_char(&mut result, digits[i])
+        }
+    }
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_binary(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    let mut num: u64
+    
+    match arg {
+        I8(n) => num = n as u64
+        I16(n) => num = n as u64
+        I32(n) => num = n as u64
+        I64(n) => num = n as u64
+        U8(n) => num = n as u64
+        U16(n) => num = n as u64
+        U32(n) => num = n as u64
+        U64(n) => num = n
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let mut result = strings::builder_new()
+    
+    // Add prefix if alternate form
+    if spec.flags.alternate {
+        strings::builder_write_string(&mut result, "0b")
+    }
+    
+    // Convert to binary
+    if num == 0 {
+        strings::builder_write_char(&mut result, '0')
+    } else {
+        let mut digits: Vec<char> = vec![]
+        while num > 0 {
+            digits.push(if num & 1 == 1 { '1' } else { '0' })
+            num >>= 1
+        }
+        
+        for i in (0..digits.len()).rev() {
+            strings::builder_write_char(&mut result, digits[i])
+        }
+    }
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_octal(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    let mut num: u64
+    
+    match arg {
+        I8(n) => num = n as u64
+        I16(n) => num = n as u64
+        I32(n) => num = n as u64
+        I64(n) => num = n as u64
+        U8(n) => num = n as u64
+        U16(n) => num = n as u64
+        U32(n) => num = n as u64
+        U64(n) => num = n
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let mut result = strings::builder_new()
+    
+    // Add prefix if alternate form
+    if spec.flags.alternate && num != 0 {
+        strings::builder_write_char(&mut result, '0')
+    }
+    
+    // Convert to octal
+    if num == 0 {
+        strings::builder_write_char(&mut result, '0')
+    } else {
+        let mut digits: Vec<char> = vec![]
+        while num > 0 {
+            digits.push(('0' as u32 + (num & 7) as u32) as char)
+            num >>= 3
+        }
+        
+        for i in (0..digits.len()).rev() {
+            strings::builder_write_char(&mut result, digits[i])
+        }
+    }
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_hex(arg: &Any, spec: &FormatSpec, uppercase: bool) -> Result<string> {
+    let mut num: u64
+    
+    match arg {
+        I8(n) => num = n as u64
+        I16(n) => num = n as u64
+        I32(n) => num = n as u64
+        I64(n) => num = n as u64
+        U8(n) => num = n as u64
+        U16(n) => num = n as u64
+        U32(n) => num = n as u64
+        U64(n) => num = n
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let mut result = strings::builder_new()
+    let hex_chars = if uppercase { "0123456789ABCDEF" } else { "0123456789abcdef" }
+    
+    // Add prefix if alternate form
+    if spec.flags.alternate && num != 0 {
+        strings::builder_write_string(&mut result, if uppercase { "0X" } else { "0x" })
+    }
+    
+    // Convert to hex
+    if num == 0 {
+        strings::builder_write_char(&mut result, '0')
+    } else {
+        let mut digits: Vec<char> = vec![]
+        while num > 0 {
+            digits.push(hex_chars[(num & 0xF) as usize])
+            num >>= 4
+        }
+        
+        for i in (0..digits.len()).rev() {
+            strings::builder_write_char(&mut result, digits[i])
+        }
+    }
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_float(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    let num: f64
+    
+    match arg {
+        F32(n) => num = n as f64
+        F64(n) => num = n
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let precision = spec.precision.unwrap_or(6)
+    
+    // Simple float formatting
+    let mut result = strings::builder_new()
+    
+    // Handle special cases
+    if num.is_nan() {
+        strings::builder_write_string(&mut result, "nan")
+        return Ok(strings::builder_to_string(&result))
+    }
+    
+    if num.is_infinite() {
+        if num < 0.0 {
+            strings::builder_write_string(&mut result, "-inf")
+        } else {
+            strings::builder_write_string(&mut result, "inf")
+        }
+        return Ok(strings::builder_to_string(&result))
+    }
+    
+    // Handle sign
+    let mut value = num
+    if value < 0.0 {
+        strings::builder_write_char(&mut result, '-')
+        value = -value
+    } else if spec.flags.show_sign {
+        strings::builder_write_char(&mut result, '+')
+    } else if spec.flags.space_sign {
+        strings::builder_write_char(&mut result, ' ')
+    }
+    
+    // Format integer part
+    let integer_part = value.floor() as u64
+    let integer_str = format_decimal(&U64(integer_part), &default_spec())?
+    strings::builder_write_string(&mut result, integer_str)
+    
+    // Format fractional part
+    if precision > 0 {
+        strings::builder_write_char(&mut result, '.')
+        
+        let mut frac = value - integer_part as f64
+        for _ in 0..precision {
+            frac *= 10.0
+            let digit = frac.floor() as u32
+            strings::builder_write_char(&mut result, ('0' as u32 + digit) as char)
+            frac -= digit as f64
+        }
+    }
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_exp(arg: &Any, spec: &FormatSpec, uppercase: bool) -> Result<string> {
+    let num: f64
+    
+    match arg {
+        F32(n) => num = n as f64
+        F64(n) => num = n
+        _ => return Err(FormatError::TypeMismatch)
+    }
+    
+    let precision = spec.precision.unwrap_or(6)
+    
+    // Simple exponential formatting
+    let mut result = strings::builder_new()
+    
+    // Handle special cases
+    if num.is_nan() {
+        strings::builder_write_string(&mut result, "nan")
+        return Ok(strings::builder_to_string(&result))
+    }
+    
+    if num.is_infinite() {
+        if num < 0.0 {
+            strings::builder_write_string(&mut result, "-inf")
+        } else {
+            strings::builder_write_string(&mut result, "inf")
+        }
+        return Ok(strings::builder_to_string(&result))
+    }
+    
+    // Calculate exponent
+    let mut value = num
+    let mut exp = 0
+    
+    if value != 0.0 {
+        if value < 0.0 {
+            strings::builder_write_char(&mut result, '-')
+            value = -value
+        } else if spec.flags.show_sign {
+            strings::builder_write_char(&mut result, '+')
+        } else if spec.flags.space_sign {
+            strings::builder_write_char(&mut result, ' ')
+        }
+        
+        // Normalize to 1.0 <= value < 10.0
+        while value >= 10.0 {
+            value /= 10.0
+            exp += 1
+        }
+        while value < 1.0 {
+            value *= 10.0
+            exp -= 1
+        }
+    } else {
+        strings::builder_write_char(&mut result, '0')
+    }
+    
+    // Format mantissa
+    let mantissa_spec = FormatSpec {
+        typ: FormatType::Float,
+        width: None,
+        precision: Some(precision),
+        flags: FormatFlags {
+            left_align: false,
+            show_sign: false,
+            alternate: false,
+            zero_pad: false,
+            space_sign: false
+        },
+        fill: ' '
+    }
+    
+    let mantissa = format_float(&F64(value), &mantissa_spec)?
+    strings::builder_write_string(&mut result, mantissa)
+    
+    // Format exponent
+    strings::builder_write_char(&mut result, if uppercase { 'E' } else { 'e' })
+    if exp >= 0 {
+        strings::builder_write_char(&mut result, '+')
+    } else {
+        strings::builder_write_char(&mut result, '-')
+        exp = -exp
+    }
+    
+    // Always use at least 2 digits for exponent
+    if exp < 10 {
+        strings::builder_write_char(&mut result, '0')
+    }
+    let exp_str = format_decimal(&I32(exp), &default_spec())?
+    strings::builder_write_string(&mut result, exp_str)
+    
+    return Ok(strings::builder_to_string(&result))
+}
+
+fn format_char(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    match arg {
+        Char(c) => {
+            let mut result = strings::builder_new()
+            strings::builder_write_char(&mut result, c)
+            return Ok(strings::builder_to_string(&result))
+        }
+        U8(n) => {
+            let mut result = strings::builder_new()
+            strings::builder_write_char(&mut result, n as char)
+            return Ok(strings::builder_to_string(&result))
+        }
+        _ => return Err(FormatError::TypeMismatch)
+    }
+}
+
+fn format_pointer(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    match arg {
+        Pointer(p) => {
+            // Format pointer as hex with 0x prefix
+            let ptr_spec = FormatSpec {
+                typ: FormatType::Hex,
+                width: None,
+                precision: None,
+                flags: FormatFlags {
+                    left_align: false,
+                    show_sign: false,
+                    alternate: true,
+                    zero_pad: false,
+                    space_sign: false
+                },
+                fill: ' '
+            }
+            return format_hex(&U64(p as u64), &ptr_spec, false)
+        }
+        _ => return Err(FormatError::TypeMismatch)
+    }
+}
+
+fn format_bool(arg: &Any, spec: &FormatSpec) -> Result<string> {
+    match arg {
+        Bool(b) => {
+            return Ok(if b { "true" } else { "false" })
+        }
+        _ => return Err(FormatError::TypeMismatch)
+    }
+}
+
+// Apply width and alignment
+fn apply_width_alignment(s: string, spec: &FormatSpec) -> string {
+    if let Some(width) = spec.width {
+        let len = strings::len(s)
+        if len < width as usize {
+            if spec.flags.left_align {
+                return strings::pad_right(s, width as usize, spec.fill)
+            } else {
+                return strings::pad_left(s, width as usize, spec.fill)
+            }
+        }
+    }
+    return s
+}
+
+// Default format spec
+fn default_spec() -> FormatSpec {
+    return FormatSpec {
+        typ: FormatType::String,
+        width: None,
+        precision: None,
+        flags: FormatFlags {
+            left_align: false,
+            show_sign: false,
+            alternate: false,
+            zero_pad: false,
+            space_sign: false
+        },
+        fill: ' '
+    }
+}
+
+// Helper functions
+fn min(a: usize, b: usize) -> usize {
+    if a < b { a } else { b }
+}
+
+// Any type for variadic arguments (provided by runtime)
+enum Any {
+    String(string)
+    I8(i8)
+    I16(i16)
+    I32(i32)
+    I64(i64)
+    U8(u8)
+    U16(u16)
+    U32(u32)
+    U64(u64)
+    F32(f32)
+    F64(f64)
+    Char(char)
+    Bool(bool)
+    Pointer(*void)
+}

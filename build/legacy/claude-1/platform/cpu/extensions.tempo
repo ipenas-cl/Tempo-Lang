@@ -1,0 +1,365 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// TempoCore Custom Extensions
+// Specialized instructions for common Tempo/AtomicOS patterns
+
+module tempcore_extensions {
+    import tempcore_isa::*;
+    
+    // Extended Instruction Set for Tempo Patterns
+    enum TempoExtensions {
+        // Atomic Operations (1 cycle each)
+        ATOMIC_SWAP    = 0x70,  // Atomic swap: rd = mem[rs1]; mem[rs1] = rs2
+        ATOMIC_ADD     = 0x71,  // Atomic add: mem[rs1] += rs2; rd = old value
+        ATOMIC_CAS     = 0x72,  // Compare-and-swap: if mem[rs1] == rs2, mem[rs1] = rd
+        ATOMIC_FENCE   = 0x73,  // Memory fence for atomic operations
+        
+        // Channel Operations (2 cycles)
+        CHAN_SEND      = 0x80,  // Send on channel: chan[rs1] <- rs2
+        CHAN_RECV      = 0x81,  // Receive from channel: rd <- chan[rs1]
+        CHAN_SELECT    = 0x82,  // Select on multiple channels
+        CHAN_READY     = 0x83,  // Check if channel ready: rd = ready(chan[rs1])
+        
+        // Task Management (1 cycle)
+        TASK_YIELD     = 0x90,  // Yield to scheduler
+        TASK_SPAWN     = 0x91,  // Spawn new task: task_id = spawn(rs1)
+        TASK_JOIN      = 0x92,  // Join task: join(task[rs1])
+        TASK_ID        = 0x93,  // Get current task ID: rd = current_task_id
+        
+        // Timing Extensions (1 cycle)
+        TIME_NOW       = 0xA0,  // Get current time: rd = cycle_count
+        TIME_DEADLINE  = 0xA1,  // Set deadline: deadline = rs1
+        TIME_BUDGET    = 0xA2,  // Set time budget: budget = rs1
+        TIME_CHECK     = 0xA3,  // Check timing: rd = (now < deadline)
+        TIME_FENCE     = 0xA4,  // Timing fence (wait until specific cycle)
+        
+        // Memory Barriers (1 cycle)
+        MEM_ACQUIRE    = 0xB0,  // Acquire barrier
+        MEM_RELEASE    = 0xB1,  // Release barrier
+        MEM_SEQCST     = 0xB2,  // Sequential consistency barrier
+        
+        // Vector Operations (2 cycles, operate on 4x64-bit values)
+        VEC_ADD        = 0xC0,  // Vector add: vrd = vrs1 + vrs2
+        VEC_MUL        = 0xC1,  // Vector multiply: vrd = vrs1 * vrs2
+        VEC_DOT        = 0xC2,  // Dot product: rd = dot(vrs1, vrs2)
+        VEC_LOAD       = 0xC3,  // Load vector from memory
+        VEC_STORE      = 0xC4,  // Store vector to memory
+        
+        // Cryptographic Extensions (4 cycles)
+        CRYPTO_HASH    = 0xD0,  // Hash block: rd = hash(rs1, rs2)
+        CRYPTO_AES     = 0xD1,  // AES round: rd = aes_round(rs1, rs2)
+        CRYPTO_RAND    = 0xD2,  // Get random number: rd = rand()
+    }
+    
+    // Channel State
+    struct Channel {
+        id: u32,
+        buffer: Vec<u64>,
+        capacity: usize,
+        readers: u32,
+        writers: u32,
+        closed: bool,
+    }
+    
+    // Task State
+    struct Task {
+        id: u32,
+        pc: u64,
+        registers: [u64; 32],
+        stack_pointer: u64,
+        deadline: u64,
+        priority: u8,
+        state: TaskState,
+    }
+    
+    enum TaskState {
+        Ready,
+        Running,
+        Blocked,
+        Completed,
+    }
+    
+    // Extension-specific processor state
+    struct ExtensionState {
+        // Channel subsystem
+        channels: HashMap<u32, Channel>,
+        next_channel_id: u32,
+        
+        // Task subsystem
+        tasks: HashMap<u32, Task>,
+        current_task: u32,
+        next_task_id: u32,
+        scheduler_quantum: u64,
+        
+        // Vector registers (4x64-bit each)
+        vector_registers: [[u64; 4]; 8],
+        
+        // Cryptographic state
+        crypto_key: [u64; 4],
+        crypto_state: [u64; 4],
+        rng_state: u64,
+    }
+    
+    impl ExtensionState {
+        fn new() -> Self {
+            ExtensionState {
+                channels: HashMap::new(),
+                next_channel_id: 1,
+                tasks: HashMap::new(),
+                current_task: 0,
+                next_task_id: 1,
+                scheduler_quantum: 1000,  // 1000 cycles per quantum
+                vector_registers: [[0; 4]; 8],
+                crypto_key: [0; 4],
+                crypto_state: [0; 4],
+                rng_state: 0x1234567890ABCDEF,
+            }
+        }
+    }
+    
+    // Execute extended instruction
+    pub fn execute_extension(
+        opcode: u8,
+        rs1: u64,
+        rs2: u64,
+        rd: u5,
+        state: &mut ProcessorState,
+        ext_state: &mut ExtensionState,
+        memory: &mut Memory
+    ) -> Result<u64, Exception> {
+        match opcode {
+            // Atomic Operations
+            0x70 => {  // ATOMIC_SWAP
+                let addr = rs1;
+                let old_value = memory.read_data(addr);
+                memory.write_data(addr, rs2);
+                Ok(old_value)
+            },
+            0x71 => {  // ATOMIC_ADD
+                let addr = rs1;
+                let old_value = memory.read_data(addr);
+                memory.write_data(addr, old_value + rs2);
+                Ok(old_value)
+            },
+            0x72 => {  // ATOMIC_CAS
+                let addr = rs1;
+                let expected = rs2;
+                let new_value = state.registers[rd as usize];
+                let current = memory.read_data(addr);
+                if current == expected {
+                    memory.write_data(addr, new_value);
+                    Ok(1)  // Success
+                } else {
+                    Ok(0)  // Failure
+                }
+            },
+            
+            // Channel Operations
+            0x80 => {  // CHAN_SEND
+                let chan_id = rs1 as u32;
+                if let Some(channel) = ext_state.channels.get_mut(&chan_id) {
+                    if !channel.closed && channel.buffer.len() < channel.capacity {
+                        channel.buffer.push(rs2);
+                        Ok(1)  // Success
+                    } else {
+                        Ok(0)  // Channel full or closed
+                    }
+                } else {
+                    Err(Exception::IllegalInstruction)
+                }
+            },
+            0x81 => {  // CHAN_RECV
+                let chan_id = rs1 as u32;
+                if let Some(channel) = ext_state.channels.get_mut(&chan_id) {
+                    if let Some(value) = channel.buffer.pop() {
+                        Ok(value)
+                    } else if channel.closed {
+                        Ok(u64::MAX)  // Special value for closed channel
+                    } else {
+                        // Block task
+                        if let Some(task) = ext_state.tasks.get_mut(&ext_state.current_task) {
+                            task.state = TaskState::Blocked;
+                        }
+                        Ok(0)
+                    }
+                } else {
+                    Err(Exception::IllegalInstruction)
+                }
+            },
+            
+            // Task Management
+            0x90 => {  // TASK_YIELD
+                // Yield to scheduler
+                state.cycle_count += ext_state.scheduler_quantum;
+                Ok(0)
+            },
+            0x91 => {  // TASK_SPAWN
+                let entry_point = rs1;
+                let task_id = ext_state.next_task_id;
+                ext_state.next_task_id += 1;
+                
+                let new_task = Task {
+                    id: task_id,
+                    pc: entry_point,
+                    registers: [0; 32],
+                    stack_pointer: 0x10000000,  // Default stack location
+                    deadline: state.deadline,
+                    priority: 5,  // Default priority
+                    state: TaskState::Ready,
+                };
+                
+                ext_state.tasks.insert(task_id, new_task);
+                Ok(task_id as u64)
+            },
+            0x93 => {  // TASK_ID
+                Ok(ext_state.current_task as u64)
+            },
+            
+            // Timing Extensions
+            0xA0 => {  // TIME_NOW
+                Ok(state.cycle_count)
+            },
+            0xA1 => {  // TIME_DEADLINE
+                state.deadline = rs1;
+                Ok(0)
+            },
+            0xA2 => {  // TIME_BUDGET
+                state.current_wcet = rs1 as u32;
+                Ok(0)
+            },
+            0xA3 => {  // TIME_CHECK
+                Ok(if state.cycle_count < state.deadline { 1 } else { 0 })
+            },
+            0xA4 => {  // TIME_FENCE
+                let target_cycle = rs1;
+                if state.cycle_count < target_cycle {
+                    state.cycle_count = target_cycle;
+                }
+                Ok(0)
+            },
+            
+            // Vector Operations
+            0xC0 => {  // VEC_ADD
+                let vrs1 = (rs1 & 0x7) as usize;
+                let vrs2 = (rs2 & 0x7) as usize;
+                let vrd = (rd & 0x7) as usize;
+                
+                for i in 0..4 {
+                    ext_state.vector_registers[vrd][i] = 
+                        ext_state.vector_registers[vrs1][i] + 
+                        ext_state.vector_registers[vrs2][i];
+                }
+                Ok(0)
+            },
+            0xC2 => {  // VEC_DOT
+                let vrs1 = (rs1 & 0x7) as usize;
+                let vrs2 = (rs2 & 0x7) as usize;
+                
+                let mut result = 0u64;
+                for i in 0..4 {
+                    result += ext_state.vector_registers[vrs1][i] * 
+                              ext_state.vector_registers[vrs2][i];
+                }
+                Ok(result)
+            },
+            
+            // Cryptographic Extensions
+            0xD2 => {  // CRYPTO_RAND
+                // Simple LFSR for deterministic "random" numbers
+                ext_state.rng_state ^= ext_state.rng_state << 13;
+                ext_state.rng_state ^= ext_state.rng_state >> 7;
+                ext_state.rng_state ^= ext_state.rng_state << 17;
+                Ok(ext_state.rng_state)
+            },
+            
+            _ => Err(Exception::IllegalInstruction)
+        }
+    }
+    
+    // Helper functions for Tempo patterns
+    
+    // Create a new channel
+    pub fn create_channel(ext_state: &mut ExtensionState, capacity: usize) -> u32 {
+        let id = ext_state.next_channel_id;
+        ext_state.next_channel_id += 1;
+        
+        let channel = Channel {
+            id,
+            buffer: Vec::with_capacity(capacity),
+            capacity,
+            readers: 0,
+            writers: 0,
+            closed: false,
+        };
+        
+        ext_state.channels.insert(id, channel);
+        id
+    }
+    
+    // Close a channel
+    pub fn close_channel(ext_state: &mut ExtensionState, chan_id: u32) {
+        if let Some(channel) = ext_state.channels.get_mut(&chan_id) {
+            channel.closed = true;
+        }
+    }
+    
+    // Task scheduler (simple round-robin)
+    pub fn schedule_next_task(ext_state: &mut ExtensionState) -> Option<u32> {
+        let ready_tasks: Vec<u32> = ext_state.tasks
+            .iter()
+            .filter(|(_, task)| task.state == TaskState::Ready)
+            .map(|(id, _)| *id)
+            .collect();
+        
+        if ready_tasks.is_empty() {
+            None
+        } else {
+            // Simple round-robin
+            let current_index = ready_tasks.iter()
+                .position(|&id| id == ext_state.current_task)
+                .unwrap_or(0);
+            
+            let next_index = (current_index + 1) % ready_tasks.len();
+            Some(ready_tasks[next_index])
+        }
+    }
+    
+    // Optimized patterns for common Tempo operations
+    
+    // Fast mutex implementation using atomic operations
+    pub fn fast_mutex_lock(addr: u64, memory: &mut Memory) -> bool {
+        let expected = 0u64;
+        let new_value = 1u64;
+        let current = memory.read_data(addr);
+        if current == expected {
+            memory.write_data(addr, new_value);
+            true
+        } else {
+            false
+        }
+    }
+    
+    pub fn fast_mutex_unlock(addr: u64, memory: &mut Memory) {
+        memory.write_data(addr, 0);
+    }
+    
+    // Deterministic memory allocation from scratchpad
+    pub fn scratchpad_alloc(size: u64, current_offset: &mut u64) -> Result<u64, &'static str> {
+        if *current_offset + size > SCRATCHPAD_SIZE {
+            Err("Scratchpad exhausted")
+        } else {
+            let addr = *current_offset;
+            *current_offset += size;
+            Ok(addr)
+        }
+    }
+}

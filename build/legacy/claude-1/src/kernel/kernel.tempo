@@ -1,0 +1,62 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// AtomicOS Kernel Entry Point
+// Main kernel initialization and entry
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+//
+// All standard library functions are globally available in Tempo
+// No imports needed - everything built-in for offline programming
+
+// Kernel entry point - called by bootloader
+func kernel_main() {
+    // Initialize VGA for screen output
+    vga_init()
+    vga_print("AtomicOS Kernel v0.1.0\n")
+    vga_print("Initializing kernel subsystems...\n\n")
+    
+    // Initialize physical memory manager
+    vga_print("[MEMORY] Initializing physical memory manager... ")
+    memory_init()
+    vga_print("OK\n")
+    
+    // Set up interrupt descriptor table
+    vga_print("[IDT] Setting up interrupt handlers... ")
+    interrupts_init()
+    vga_print("OK\n")
+    
+    // Initialize system call interface
+    vga_print("[SYSCALL] Initializing system calls... ")
+    syscalls_init()
+    vga_print("OK\n")
+    
+    // Initialize scheduler
+    vga_print("[SCHEDULER] Initializing deterministic scheduler... ")
+    scheduler_init()
+    vga_print("OK\n")
+    
+    vga_print("\nAtomicOS kernel initialized successfully!\n")
+    vga_print("System ready.\n")
+    
+    // Enable interrupts
+    enable_interrupts()
+    
+    // Kernel idle loop
+    while true {
+        halt() // CPU halt until next interrupt
+    }
+}
+
+// Assembly functions
+extern func enable_interrupts()
+extern func halt()

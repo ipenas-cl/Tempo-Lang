@@ -6,12 +6,27 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-COMPILER="$SCRIPT_DIR/tempo-compiler"
+
+# Detect OS and select compiler
+case "$(uname)" in
+    Darwin)
+        COMPILER="$ROOT_DIR/compiler/platforms/macos/tempo-compiler"
+        ;;
+    Linux)
+        COMPILER="$ROOT_DIR/compiler/platforms/linux/tempo-compiler"
+        ;;
+    MINGW*|CYGWIN*|MSYS*)
+        COMPILER="$ROOT_DIR/compiler/platforms/windows/tempo-compiler.exe"
+        ;;
+    *)
+        echo "❌ Sistema operativo no soportado"
+        exit 1
+        ;;
+esac
 
 # Check if compiler exists
 if [ ! -f "$COMPILER" ]; then
-    echo "❌ Tempo compiler not found. Please run:"
-    echo "   ./build.sh"
+    echo "❌ Tempo compiler not found at: $COMPILER"
     exit 1
 fi
 
@@ -21,18 +36,63 @@ if [ $# -eq 0 ]; then
     echo ""
     echo "Usage:"
     echo "  tempo <file.tempo>    Compile a Tempo program"
+    echo "  tempo monitor         Launch Tempo observability dashboard"
+    echo "  tempo debug <app>     Debug a running Tempo application"
+    echo "  tempo logs <app>      Show logs for a Tempo application"
+    echo "  tempo profile <app>   Generate performance profile for PGO"
+    echo "  tempo alert <msg>     Send alert to SRE team"
     echo "  tempo --version       Show version"
     echo "  tempo --help          Show this help"
     echo ""
     echo "Examples:"
-    echo "  tempo hello.tempo     # Compiles to 'stage1'"
-    echo "  ./stage1              # Run the compiled program"
+    echo "  tempo hello.tempo     # Compiles to 'tempo.app'"
+    echo "  ./tempo.app           # Run the compiled program"
+    echo "  tempo monitor         # Launch observability dashboard"
+    echo "  tempo debug tempo.app # Debug running application"
+    echo "  tempo profile tempo.app # Generate PGO data for optimization"
     echo ""
     exit 0
 fi
 
-# Handle flags
+# Handle commands and flags
 case "$1" in
+    monitor)
+        echo "🔍 Launching Tempo Observability Monitor..."
+        exec "$ROOT_DIR/tools/monitor/tempo-monitor"
+        ;;
+    debug)
+        if [ $# -lt 2 ]; then
+            echo "❌ Usage: tempo debug <app_name>"
+            exit 1
+        fi
+        echo "🐛 Debugging Tempo app: $2"
+        exec "$ROOT_DIR/tools/monitor/tempo-debug" "$2"
+        ;;
+    logs)
+        if [ $# -lt 2 ]; then
+            echo "❌ Usage: tempo logs <app_name>"
+            exit 1
+        fi
+        echo "📋 Showing logs for: $2"
+        exec "$ROOT_DIR/tools/monitor/tempo-logs" "$2"
+        ;;
+    profile)
+        if [ $# -lt 2 ]; then
+            echo "❌ Usage: tempo profile <app_name>"
+            exit 1
+        fi
+        echo "🔬 Profiling application: $2"
+        exec "$ROOT_DIR/tools/monitor/tempo-profile" "$2"
+        ;;
+    alert)
+        if [ $# -lt 2 ]; then
+            echo "❌ Usage: tempo alert <message>"
+            exit 1
+        fi
+        shift # Remove 'alert' from arguments
+        echo "🚨 Sending alert to SRE: $*"
+        exec "$ROOT_DIR/tools/monitor/tempo-alert" "$*"
+        ;;
     --help|-h)
         $0
         exit 0
@@ -76,7 +136,7 @@ echo "🔥 Compiling $1..."
 
 if [ $? -eq 0 ]; then
     echo "✅ Compilation successful!"
-    echo "   Run with: ./stage1"
+    echo "   Run with: ./$SOURCE_FILE.app"
 else
     echo "❌ Compilation failed"
     exit 1

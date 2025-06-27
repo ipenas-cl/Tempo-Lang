@@ -1,0 +1,574 @@
+// ╔═════╦═════╦═════╗
+// ║ 🛡️  ║ ⚖️  ║ ⚡  ║
+// ║  C  ║  E  ║  G  ║
+// ╚═════╩═════╩═════╝
+// ╔═════════════════╗
+// ║ wcet [T∞] bound ║
+// ╚═════════════════╝
+//
+// Author: Ignacio Peña Sepúlveda
+// Date: June 25, 2025
+
+// Microcode Generator for CPU Extensions
+// Generates custom CPU microcode for accelerating common Tempo operations
+
+module hardware_synthesis.microcode_generator {
+    use hardware_synthesis.pattern_detector
+    use core.types
+    
+    // Microcode instruction format
+    struct MicrocodeInstruction {
+        opcode: u32
+        operands: [Operand]
+        control_signals: ControlSignals
+        timing: MicrocodeTiming
+        encoding: InstructionEncoding
+    }
+    
+    // Control signals for CPU pipeline
+    struct ControlSignals {
+        alu_op: ALUOperation
+        register_read: [RegisterSelect]
+        register_write: Option<RegisterSelect>
+        memory_access: Option<MemoryAccess>
+        branch_control: Option<BranchControl>
+        pipeline_control: PipelineControl
+        special_unit: Option<SpecialUnit>
+    }
+    
+    // Special execution units
+    enum SpecialUnit {
+        VectorUnit(VectorConfig)
+        CryptoUnit(CryptoConfig)
+        MatrixUnit(MatrixConfig)
+        FixedPointUnit(FixedPointConfig)
+        BitManipUnit(BitManipConfig)
+    }
+    
+    // Microcode generation result
+    struct MicrocodeExtension {
+        instructions: [MicrocodeInstruction]
+        decoder_logic: DecoderLogic
+        pipeline_modifications: [PipelineModification]
+        register_file_extensions: [RegisterExtension]
+        performance_model: PerformanceModel
+        verification_suite: VerificationSuite
+    }
+    
+    // Decoder logic for new instructions
+    struct DecoderLogic {
+        opcode_map: HashMap<u32, MicrocodeSequence>
+        prefix_detection: PrefixLogic
+        mode_switching: ModeSwitchLogic
+        trap_handling: TrapLogic
+    }
+    
+    // Microcode sequence for complex operations
+    struct MicrocodeSequence {
+        micro_ops: [MicroOp]
+        cycle_count: u32
+        resource_usage: [ResourceUsage]
+        dependencies: [Dependency]
+    }
+    
+    // Main microcode generation function
+    func generate_microcode_extension(patterns: [pattern_detector.DetectedPattern], 
+                                    cpu_model: CPUModel) -> MicrocodeExtension {
+        let extension = MicrocodeExtension {
+            instructions: [],
+            decoder_logic: DecoderLogic::new(),
+            pipeline_modifications: [],
+            register_file_extensions: [],
+            performance_model: PerformanceModel::new(),
+            verification_suite: VerificationSuite::new()
+        }
+        
+        // Generate instructions for each pattern type
+        for pattern in patterns {
+            match pattern.pattern_type {
+                pattern_detector.PatternType.MatrixOperation(m) => {
+                    let matrix_ext = generate_matrix_extension(m, cpu_model)
+                    extension.merge(matrix_ext)
+                }
+                pattern_detector.PatternType.Cryptographic(c) => {
+                    let crypto_ext = generate_crypto_extension(c, cpu_model)
+                    extension.merge(crypto_ext)
+                }
+                pattern_detector.PatternType.SignalProcessing(d) => {
+                    let dsp_ext = generate_dsp_extension(d, cpu_model)
+                    extension.merge(dsp_ext)
+                }
+                pattern_detector.PatternType.ParallelReduction(r) => {
+                    let reduction_ext = generate_reduction_extension(r, cpu_model)
+                    extension.merge(reduction_ext)
+                }
+                _ => {}
+            }
+        }
+        
+        // Optimize instruction encoding
+        optimize_instruction_encoding(&mut extension)
+        
+        // Generate decoder logic
+        extension.decoder_logic = generate_decoder_logic(extension.instructions)
+        
+        // Calculate performance improvements
+        extension.performance_model = model_performance(extension, cpu_model)
+        
+        // Generate verification suite
+        extension.verification_suite = generate_verification(extension)
+        
+        extension
+    }
+    
+    // Generate matrix operation microcode
+    func generate_matrix_extension(pattern: pattern_detector.MatrixPattern, 
+                                 cpu_model: CPUModel) -> MicrocodeExtension {
+        let mut extension = MicrocodeExtension::new()
+        
+        match pattern.operation {
+            pattern_detector.MatrixOp.Multiplication => {
+                // Generate matrix multiply instruction
+                let mmul_inst = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF000, 16), // Custom opcode space
+                    operands: [
+                        Operand::MatrixRegister("MA"),
+                        Operand::MatrixRegister("MB"),
+                        Operand::MatrixRegister("MC")
+                    ],
+                    control_signals: ControlSignals {
+                        alu_op: ALUOperation.MatrixMultiply,
+                        register_read: ["MA", "MB"],
+                        register_write: Some("MC"),
+                        memory_access: None,
+                        branch_control: None,
+                        pipeline_control: PipelineControl.Streaming,
+                        special_unit: Some(SpecialUnit.MatrixUnit(MatrixConfig {
+                            tile_size: 4,
+                            accumulator_bits: 48,
+                            parallel_macs: 16
+                        }))
+                    },
+                    timing: MicrocodeTiming {
+                        latency: pattern.dimensions.rows + pattern.dimensions.cols,
+                        throughput: 1,
+                        pipeline_depth: 8
+                    },
+                    encoding: generate_encoding(["MMUL", "MA", "MB", "MC"])
+                }
+                
+                extension.instructions.push(mmul_inst)
+                
+                // Generate tiled matrix multiply for larger matrices
+                if pattern.dimensions.rows > 16 || pattern.dimensions.cols > 16 {
+                    extension.instructions.push(generate_tiled_mmul(pattern))
+                }
+            }
+            
+            pattern_detector.MatrixOp.Convolution => {
+                // Generate 2D convolution instruction
+                let conv2d_inst = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF010, 16),
+                    operands: [
+                        Operand::MatrixRegister("Input"),
+                        Operand::MatrixRegister("Kernel"),
+                        Operand::MatrixRegister("Output"),
+                        Operand::Immediate("Stride")
+                    ],
+                    control_signals: generate_conv2d_control(),
+                    timing: calculate_conv2d_timing(pattern),
+                    encoding: generate_encoding(["CONV2D", "Input", "Kernel", "Output", "Stride"])
+                }
+                
+                extension.instructions.push(conv2d_inst)
+            }
+            
+            _ => {}
+        }
+        
+        // Add supporting instructions
+        extension.instructions.extend(generate_matrix_load_store())
+        extension.instructions.extend(generate_matrix_transpose())
+        
+        // Add matrix register file extension
+        extension.register_file_extensions.push(RegisterExtension {
+            name: "MatrixRegFile",
+            num_registers: 8,
+            register_width: pattern.dimensions.rows * pattern.dimensions.cols * 32,
+            access_ports: 3, // 2 read, 1 write
+            special_features: ["Double buffering", "Transpose on read"]
+        })
+        
+        extension
+    }
+    
+    // Generate cryptographic microcode
+    func generate_crypto_extension(pattern: pattern_detector.CryptoPattern, 
+                                 cpu_model: CPUModel) -> MicrocodeExtension {
+        let mut extension = MicrocodeExtension::new()
+        
+        match pattern.algorithm {
+            pattern_detector.CryptoAlgorithm.AES => {
+                // AES round instruction
+                let aes_round = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF100, 8),
+                    operands: [
+                        Operand::VectorRegister("State"),
+                        Operand::VectorRegister("RoundKey"),
+                        Operand::VectorRegister("Result")
+                    ],
+                    control_signals: ControlSignals {
+                        alu_op: ALUOperation.Custom("AES_ROUND"),
+                        register_read: ["State", "RoundKey"],
+                        register_write: Some("Result"),
+                        memory_access: None,
+                        branch_control: None,
+                        pipeline_control: PipelineControl.SingleCycle,
+                        special_unit: Some(SpecialUnit.CryptoUnit(CryptoConfig {
+                            sbox_implementation: SBoxImpl.LUT,
+                            mix_columns: true,
+                            key_expansion: false
+                        }))
+                    },
+                    timing: MicrocodeTiming {
+                        latency: 1,
+                        throughput: 1,
+                        pipeline_depth: 1
+                    },
+                    encoding: generate_encoding(["AESRND", "State", "RoundKey", "Result"])
+                }
+                
+                extension.instructions.push(aes_round)
+                
+                // AES key expansion
+                let aes_key_expand = generate_aes_key_expansion(pattern.key_size)
+                extension.instructions.push(aes_key_expand)
+                
+                // Complete AES encryption (multiple rounds)
+                let aes_encrypt = generate_aes_complete(pattern.rounds)
+                extension.instructions.push(aes_encrypt)
+            }
+            
+            pattern_detector.CryptoAlgorithm.SHA256 => {
+                // SHA-256 compression function
+                let sha_compress = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF110, 8),
+                    operands: [
+                        Operand.VectorRegister("State"),
+                        Operand.MemoryOperand("MessageBlock"),
+                        Operand.VectorRegister("NewState")
+                    ],
+                    control_signals: generate_sha256_control(),
+                    timing: MicrocodeTiming {
+                        latency: 64, // 64 rounds
+                        throughput: 1,
+                        pipeline_depth: 8
+                    },
+                    encoding: generate_encoding(["SHA256", "State", "MsgBlock", "NewState"])
+                }
+                
+                extension.instructions.push(sha_compress)
+            }
+            
+            _ => {}
+        }
+        
+        // Add crypto-specific register extensions
+        extension.register_file_extensions.push(RegisterExtension {
+            name: "CryptoRegFile",
+            num_registers: 16,
+            register_width: 128, // For AES state
+            access_ports: 2,
+            special_features: ["Secure clear", "Side-channel resistant"]
+        })
+        
+        extension
+    }
+    
+    // Generate DSP microcode extensions
+    func generate_dsp_extension(pattern: pattern_detector.DSPPattern, 
+                              cpu_model: CPUModel) -> MicrocodeExtension {
+        let mut extension = MicrocodeExtension::new()
+        
+        match pattern.operation {
+            pattern_detector.DSPOp.FFT => {
+                // Generate FFT butterfly instruction
+                let fft_butterfly = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF200, 8),
+                    operands: [
+                        Operand.ComplexRegister("A"),
+                        Operand.ComplexRegister("B"),
+                        Operand.ComplexRegister("W"), // Twiddle factor
+                        Operand.ComplexRegister("OutA"),
+                        Operand.ComplexRegister("OutB")
+                    ],
+                    control_signals: generate_fft_butterfly_control(),
+                    timing: MicrocodeTiming {
+                        latency: 4, // Complex multiply + add/sub
+                        throughput: 1,
+                        pipeline_depth: 4
+                    },
+                    encoding: generate_encoding(["FFTBFLY", "A", "B", "W", "OutA", "OutB"])
+                }
+                
+                extension.instructions.push(fft_butterfly)
+                
+                // Generate complete FFT instruction for common sizes
+                if let Some(size) = pattern.transform_size {
+                    if is_power_of_two(size) && size <= 1024 {
+                        let fft_complete = generate_fft_complete(size)
+                        extension.instructions.push(fft_complete)
+                    }
+                }
+            }
+            
+            pattern_detector.DSPOp.FIR => {
+                // FIR filter tap instruction
+                let fir_tap = MicrocodeInstruction {
+                    opcode: allocate_opcode(0xF210, 8),
+                    operands: [
+                        Operand.VectorRegister("Samples"),
+                        Operand.VectorRegister("Coefficients"),
+                        Operand.Accumulator("Result")
+                    ],
+                    control_signals: ControlSignals {
+                        alu_op: ALUOperation.VectorMAC,
+                        register_read: ["Samples", "Coefficients"],
+                        register_write: Some("Result"),
+                        memory_access: None,
+                        branch_control: None,
+                        pipeline_control: PipelineControl.Streaming,
+                        special_unit: Some(SpecialUnit.VectorUnit(VectorConfig {
+                            vector_length: 8,
+                            element_width: pattern.bit_width,
+                            operations: ["MAC", "SHIFT"]
+                        }))
+                    },
+                    timing: MicrocodeTiming {
+                        latency: 1,
+                        throughput: 8, // Process 8 taps per cycle
+                        pipeline_depth: 3
+                    },
+                    encoding: generate_encoding(["FIRTAP", "Samples", "Coeff", "Result"])
+                }
+                
+                extension.instructions.push(fir_tap)
+            }
+            
+            _ => {}
+        }
+        
+        // Add DSP accumulator registers
+        extension.register_file_extensions.push(RegisterExtension {
+            name: "DSPAccumulators",
+            num_registers: 4,
+            register_width: 48, // Extended precision
+            access_ports: 2,
+            special_features: ["Saturation", "Rounding modes"]
+        })
+        
+        extension
+    }
+    
+    // Generate reduction operation microcode
+    func generate_reduction_extension(pattern: pattern_detector.ReductionPattern,
+                                    cpu_model: CPUModel) -> MicrocodeExtension {
+        let mut extension = MicrocodeExtension::new()
+        
+        // Vector reduction instruction
+        let reduction_inst = MicrocodeInstruction {
+            opcode: allocate_opcode(0xF300, 8),
+            operands: [
+                Operand.VectorRegister("Input"),
+                Operand.ScalarRegister("Result"),
+                Operand.Immediate("Operation")
+            ],
+            control_signals: ControlSignals {
+                alu_op: match pattern.operation {
+                    ReductionOp.Sum => ALUOperation.VectorSum,
+                    ReductionOp.Product => ALUOperation.VectorProduct,
+                    ReductionOp.Max => ALUOperation.VectorMax,
+                    ReductionOp.Min => ALUOperation.VectorMin,
+                    _ => ALUOperation.Custom("REDUCE")
+                },
+                register_read: ["Input"],
+                register_write: Some("Result"),
+                memory_access: None,
+                branch_control: None,
+                pipeline_control: PipelineControl.TreeReduction,
+                special_unit: Some(SpecialUnit.VectorUnit(VectorConfig {
+                    vector_length: min(pattern.input_size, 16),
+                    element_width: get_element_width(pattern.element_type),
+                    operations: ["REDUCE"]
+                }))
+            },
+            timing: MicrocodeTiming {
+                latency: log2(pattern.input_size),
+                throughput: 1,
+                pipeline_depth: log2(min(pattern.input_size, 16))
+            },
+            encoding: generate_encoding(["VREDUCE", "Input", "Result", "Op"])
+        }
+        
+        extension.instructions.push(reduction_inst)
+        
+        // Add parallel prefix sum for scan operations
+        if pattern.associative {
+            let prefix_sum = generate_prefix_sum_instruction(pattern)
+            extension.instructions.push(prefix_sum)
+        }
+        
+        extension
+    }
+    
+    // Generate decoder logic for new instructions
+    func generate_decoder_logic(instructions: [MicrocodeInstruction]) -> DecoderLogic {
+        let decoder = DecoderLogic {
+            opcode_map: HashMap::new(),
+            prefix_detection: PrefixLogic::new(),
+            mode_switching: ModeSwitchLogic::new(),
+            trap_handling: TrapLogic::new()
+        }
+        
+        // Build opcode map
+        for inst in instructions {
+            let sequence = generate_microcode_sequence(inst)
+            decoder.opcode_map.insert(inst.opcode, sequence)
+        }
+        
+        // Generate prefix detection for extended instructions
+        decoder.prefix_detection = generate_prefix_logic(instructions)
+        
+        // Generate mode switching logic
+        decoder.mode_switching = generate_mode_switch_logic(instructions)
+        
+        // Generate trap handling for illegal instructions
+        decoder.trap_handling = generate_trap_logic(instructions)
+        
+        decoder
+    }
+    
+    // Generate microcode sequence for instruction
+    func generate_microcode_sequence(inst: MicrocodeInstruction) -> MicrocodeSequence {
+        let micro_ops = []
+        
+        // Decompose instruction into micro-operations
+        match inst.control_signals.special_unit {
+            Some(SpecialUnit.MatrixUnit(config)) => {
+                micro_ops.extend(generate_matrix_micro_ops(inst, config))
+            }
+            Some(SpecialUnit.CryptoUnit(config)) => {
+                micro_ops.extend(generate_crypto_micro_ops(inst, config))
+            }
+            Some(SpecialUnit.VectorUnit(config)) => {
+                micro_ops.extend(generate_vector_micro_ops(inst, config))
+            }
+            _ => {
+                micro_ops.push(generate_simple_micro_op(inst))
+            }
+        }
+        
+        // Calculate resource usage
+        let resources = calculate_resource_usage(micro_ops)
+        
+        // Identify dependencies
+        let dependencies = extract_dependencies(micro_ops)
+        
+        MicrocodeSequence {
+            micro_ops: micro_ops,
+            cycle_count: micro_ops.len() as u32,
+            resource_usage: resources,
+            dependencies: dependencies
+        }
+    }
+    
+    // Model performance of microcode extensions
+    func model_performance(extension: MicrocodeExtension, 
+                         cpu_model: CPUModel) -> PerformanceModel {
+        let model = PerformanceModel {
+            instruction_timings: HashMap::new(),
+            pipeline_effects: [],
+            cache_effects: [],
+            power_estimates: HashMap::new()
+        }
+        
+        // Model each instruction's performance
+        for inst in extension.instructions {
+            let timing = model_instruction_timing(inst, cpu_model)
+            model.instruction_timings.insert(inst.opcode, timing)
+            
+            // Estimate power consumption
+            let power = estimate_instruction_power(inst, cpu_model)
+            model.power_estimates.insert(inst.opcode, power)
+        }
+        
+        // Model pipeline interactions
+        model.pipeline_effects = model_pipeline_effects(extension, cpu_model)
+        
+        // Model cache effects
+        model.cache_effects = model_cache_effects(extension, cpu_model)
+        
+        model
+    }
+    
+    // Generate verification suite
+    func generate_verification(extension: MicrocodeExtension) -> VerificationSuite {
+        let suite = VerificationSuite {
+            unit_tests: [],
+            integration_tests: [],
+            performance_tests: [],
+            corner_cases: []
+        }
+        
+        // Generate unit tests for each instruction
+        for inst in extension.instructions {
+            suite.unit_tests.extend(generate_instruction_tests(inst))
+        }
+        
+        // Generate integration tests
+        suite.integration_tests = generate_integration_tests(extension)
+        
+        // Generate performance validation tests
+        suite.performance_tests = generate_performance_tests(extension)
+        
+        // Generate corner case tests
+        suite.corner_cases = generate_corner_cases(extension)
+        
+        suite
+    }
+    
+    // Generate RTL for microcode implementation
+    func generate_microcode_rtl(extension: MicrocodeExtension) -> string {
+        let mut rtl = ""
+        
+        // Generate decoder RTL
+        rtl += generate_decoder_rtl(extension.decoder_logic)
+        
+        // Generate execution unit RTL
+        for inst in extension.instructions {
+            if let Some(unit) = inst.control_signals.special_unit {
+                rtl += generate_execution_unit_rtl(unit)
+            }
+        }
+        
+        // Generate pipeline modifications
+        rtl += generate_pipeline_mods_rtl(extension.pipeline_modifications)
+        
+        // Generate register file extensions
+        rtl += generate_regfile_rtl(extension.register_file_extensions)
+        
+        rtl
+    }
+}
+
+// Example usage:
+// let patterns = pattern_detector.detect_patterns(my_module)
+// let cpu_model = CPUModel {
+//     architecture: "RISC-V",
+//     pipeline_depth: 5,
+//     issue_width: 2,
+//     vector_length: 256,
+//     cache_sizes: [32KB, 256KB, 8MB]
+// }
+// let microcode_ext = generate_microcode_extension(patterns, cpu_model)
+// let rtl = generate_microcode_rtl(microcode_ext)

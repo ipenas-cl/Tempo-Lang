@@ -1,0 +1,276 @@
+#!/bin/bash
+# Tempo Monitor - Interactive real-time monitor for Tempo applications only
+
+# Terminal control functions
+clear_screen() {
+    printf '\033[2J\033[H'
+}
+
+show_cursor() {
+    printf '\033[?25h'
+}
+
+hide_cursor() {
+    printf '\033[?25l'
+}
+
+setup_terminal() {
+    # Set up raw terminal input for key detection
+    stty -echo -icanon time 0 min 0
+    hide_cursor
+    
+    # Trap cleanup on exit
+    trap 'cleanup; exit' INT TERM EXIT
+}
+
+cleanup() {
+    stty echo icanon
+    show_cursor
+    clear_screen
+    echo "👋 Tempo Monitor terminated"
+}
+
+get_tempo_processes() {
+    # Get all processes that could be part of a Tempo ecosystem
+    # This includes:
+    # 1. Tempo compiled applications (.tempo.app)
+    # 2. Tempo compiler processes 
+    # 3. Stage binaries (stage0, stage1, stage2)
+    # 4. Applications compiled with Tempo (any executable in current project)
+    # 5. Common ecosystem services (databases, web servers, microservices)
+    # 6. Applications with tempo in their name or path
+    
+    local all_processes=$(ps aux | grep -v grep | grep -v tempo-monitor)
+    
+    # Look for explicit Tempo applications
+    local tempo_apps=$(echo "$all_processes" | grep -E "\.tempo\.app|tempo-.*\.app|stage[0-9]|tempo\s.*\.tempo|/tempo\s")
+    
+    # Look for processes in current directory (likely part of the project)
+    local current_dir=$(pwd)
+    local project_processes=$(echo "$all_processes" | grep "$current_dir")
+    
+    # Look for common ecosystem services
+    local ecosystem_processes=$(echo "$all_processes" | grep -E "redis-server|postgres|mysql|nginx|apache|node|python.*server|docker.*tempo|java.*tempo")
+    
+    # Look for processes with tempo in name/command
+    local tempo_named=$(echo "$all_processes" | grep -i tempo)
+    
+    # Combine all and remove duplicates
+    {
+        echo "$tempo_apps"
+        echo "$project_processes"  
+        echo "$ecosystem_processes"
+        echo "$tempo_named"
+    } | sort | uniq | grep -v "^$"
+}
+
+draw_header() {
+    echo "╔══════════════════════════════════════════════════════════════════════════════╗"
+    echo "║                     🚀 TEMPO MONITOR - Live Observability                   ║"
+    echo "║                     AtomicOS Ecosystem & Application Monitor                 ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                              ║"
+}
+
+draw_footer() {
+    echo "║                                                                              ║"
+    echo "╠══════════════════════════════════════════════════════════════════════════════╣"
+    echo "║ 🎯 INTERACTIVE COMMANDS: [d]ebug [p]rofile [l]ogs [a]lert [r]efresh [q]uit  ║"
+    echo "╚══════════════════════════════════════════════════════════════════════════════╝"
+    echo ""
+    printf "📊 Load: %s | " "$(uptime | awk -F'load averages:' '{print $2}')"
+    printf "Mem: %sKB | " "$(vm_stat | grep 'Pages active' | awk '{print $3}' | sed 's/\.//')"
+    printf "Disk: %s | " "$(df -h / | tail -1 | awk '{print $5}')"
+    printf "Update: %s" "$(date '+%H:%M:%S')"
+    echo ""
+    echo ""
+    printf "💡 Press any key for commands, 'q' to quit, auto-refresh every 2s..."
+}
+
+draw_processes() {
+    local tempo_processes=$(get_tempo_processes)
+    
+    if [ -z "$tempo_processes" ]; then
+        echo "║                    No Tempo ecosystem processes running                     ║"
+        echo "║                                                                              ║"
+        echo "║  💡 This monitor shows:                                                      ║"
+        echo "║     • Tempo applications (.tempo.app)                                      ║"
+        echo "║     • Ecosystem services (redis, postgres, nginx, etc.)                    ║"
+        echo "║     • Project processes (from current directory)                           ║"
+        echo "║     • Tempo compiler and stage binaries                                    ║"
+        echo "║                                                                              ║"
+        echo "║  🚀 Start your ecosystem and watch processes appear here!                   ║"
+        return
+    fi
+    
+    echo "║ PID    │ APPLICATION  │TYPE│ CPU% │ MEM% │WCET│  STATUS  │  UPTIME ║"
+    echo "╠════════┼══════════════┼════┼══════┼══════┼════┼══════════┼═════════╣"
+    
+    local count=0
+    echo "$tempo_processes" | while read -r line && [ $count -lt 15 ]; do
+        PID=$(echo "$line" | awk '{print $2}')
+        CPU=$(echo "$line" | awk '{print $3}')
+        MEM=$(echo "$line" | awk '{print $4}')
+        TIME=$(echo "$line" | awk '{print $10}')
+        COMMAND=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i}' | sed 's/ $//')
+        
+        # Extract application name and type
+        local APP_TYPE=""
+        if echo "$COMMAND" | grep -q "\.tempo\.app"; then
+            NAME=$(echo "$COMMAND" | sed 's/.*\///' | sed 's/\.tempo\.app.*//' | cut -c1-12)
+            APP_TYPE="APP"
+        elif echo "$COMMAND" | grep -q "redis-server"; then
+            NAME="redis"
+            APP_TYPE="DB"
+        elif echo "$COMMAND" | grep -q "postgres\|mysql"; then
+            NAME=$(echo "$COMMAND" | grep -o "postgres\|mysql")
+            APP_TYPE="DB"
+        elif echo "$COMMAND" | grep -q "nginx\|apache"; then
+            NAME=$(echo "$COMMAND" | grep -o "nginx\|apache")
+            APP_TYPE="WEB"
+        elif echo "$COMMAND" | grep -q "node\|python.*server"; then
+            NAME=$(echo "$COMMAND" | cut -d' ' -f1 | xargs basename 2>/dev/null | cut -c1-12)
+            APP_TYPE="SVC"
+        elif echo "$COMMAND" | grep -q "tempo"; then
+            NAME=$(echo "$COMMAND" | sed 's/.*tempo/tempo/' | cut -d' ' -f1 | cut -c1-12)
+            APP_TYPE="TMPO"
+        elif echo "$COMMAND" | grep -q "stage[0-9]"; then
+            NAME=$(echo "$COMMAND" | grep -o "stage[0-9]")
+            APP_TYPE="COMP"
+        else
+            NAME=$(echo "$COMMAND" | cut -d' ' -f1 | xargs basename 2>/dev/null | cut -c1-12)
+            APP_TYPE="PROC"
+        fi
+        
+        # WCET status with ecosystem awareness
+        WCET_STATUS="✅"
+        STATUS="HEALTHY"
+        
+        # Different thresholds for different types
+        case "$APP_TYPE" in
+            "APP"|"TMPO")
+                # Tempo apps should have strict WCET compliance
+                if (( $(echo "$CPU > 70" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🔴"
+                    STATUS="WCET_VIOL"
+                elif (( $(echo "$CPU > 40" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🟡"
+                    STATUS="MODERATE"
+                fi
+                ;;
+            "DB"|"WEB"|"SVC")
+                # Infrastructure can use more CPU
+                if (( $(echo "$CPU > 90" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🔴"
+                    STATUS="OVERLOAD"
+                elif (( $(echo "$CPU > 60" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🟡"
+                    STATUS="BUSY"
+                fi
+                ;;
+            *)
+                # General processes
+                if (( $(echo "$CPU > 80" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🔴"
+                    STATUS="HIGH_CPU"
+                elif (( $(echo "$CPU > 50" | bc -l 2>/dev/null || echo "0") )); then
+                    WCET_STATUS="🟡"
+                    STATUS="MODERATE"
+                fi
+                ;;
+        esac
+        
+        printf "║ %-6s │ %-12s │ %4s │ %5s │ %5s │ %s │ %-8s │ %9s ║\n" "$PID" "$NAME" "$APP_TYPE" "$CPU%" "$MEM%" "$WCET_STATUS" "$STATUS" "$TIME"
+        count=$((count + 1))
+    done
+}
+
+handle_input() {
+    local key
+    read -n 1 key 2>/dev/null
+    
+    case "$key" in
+        'q'|'Q')
+            return 1  # Exit signal
+            ;;
+        'd'|'D')
+            show_cursor
+            echo ""
+            echo "🐛 Enter PID or application name to debug:"
+            read -r target
+            hide_cursor
+            if [ -n "$target" ]; then
+                tempo debug "$target"
+                echo "Press any key to return to monitor..."
+                read -n 1
+            fi
+            ;;
+        'p'|'P')
+            show_cursor
+            echo ""
+            echo "🔬 Enter PID or application name to profile:"
+            read -r target
+            hide_cursor
+            if [ -n "$target" ]; then
+                tempo profile "$target"
+                echo "Press any key to return to monitor..."
+                read -n 1
+            fi
+            ;;
+        'l'|'L')
+            show_cursor
+            echo ""
+            echo "📋 Enter application name to view logs:"
+            read -r target
+            hide_cursor
+            if [ -n "$target" ]; then
+                tempo logs "$target"
+                echo "Press any key to return to monitor..."
+                read -n 1
+            fi
+            ;;
+        'a'|'A')
+            show_cursor
+            echo ""
+            echo "🚨 Enter alert message:"
+            read -r message
+            hide_cursor
+            if [ -n "$message" ]; then
+                tempo alert "$message"
+                echo "Press any key to return to monitor..."
+                read -n 1
+            fi
+            ;;
+        'r'|'R')
+            # Refresh - just continue the loop
+            ;;
+    esac
+    
+    return 0
+}
+
+# Main interactive loop
+main() {
+    setup_terminal
+    
+    while true; do
+        clear_screen
+        draw_header
+        draw_processes
+        draw_footer
+        
+        # Check for input with timeout
+        if handle_input; then
+            # Continue monitoring
+            sleep 2
+        else
+            # Exit requested
+            break
+        fi
+    done
+    
+    cleanup
+}
+
+# Start the interactive monitor
+main
