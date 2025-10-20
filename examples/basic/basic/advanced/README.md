@@ -1,6 +1,6 @@
-# Advanced Tempo Examples
+# Advanced Chronos Examples
 
-These examples are for contributors and advanced users who want to understand Tempo's full capabilities.
+These examples are for contributors and advanced users who want to understand Chronos's full capabilities.
 
 ## 🎮 DOOM Port
 
@@ -76,7 +76,7 @@ These examples serve as reference implementations. When contributing:
 
 ## Learning Path
 
-1. Start with the DOOM renderer to understand graphics programming in Tempo
+1. Start with the DOOM renderer to understand graphics programming in Chronos
 2. Study the orchestrator's scheduler for concurrent programming patterns
 3. Examine network code for high-performance I/O techniques
 
@@ -85,7 +85,7 @@ These examples serve as reference implementations. When contributing:
 These applications achieve their performance through:
 - **No heap allocation** in hot paths
 - **Data structure reuse** instead of allocation/deallocation
-- **Compile-time optimizations** from Tempo's WCET analysis
+- **Compile-time optimizations** from Chronos's WCET analysis
 - **Direct hardware access** where needed
 
 ## Platform Support
@@ -93,4 +93,4 @@ These applications achieve their performance through:
 - **DOOM**: Runs on Linux, macOS, AtomicOS
 - **AtomicOrchestrator**: Requires AtomicOS for full features
 
-Both demonstrate how Tempo enables systems programming without sacrificing safety or predictability.
+Both demonstrate how Chronos enables systems programming without sacrificing safety or predictability.

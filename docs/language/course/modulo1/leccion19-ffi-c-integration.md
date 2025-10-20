@@ -19,7 +19,7 @@ Date: June 25, 2025
 
 ## Teoría: FFI Determinístico
 
-FFI en Tempo debe mantener las garantías de determinismo:
+FFI en Chronos debe mantener las garantías de determinismo:
 
 1. **Análisis estático** de funciones C
 2. **Wrapping seguro** con bounds verificables
@@ -453,7 +453,7 @@ impl Drop for Database {
 ## Callback Safety
 
 ```tempo
-// Sistema de callbacks seguro entre C y Tempo
+// Sistema de callbacks seguro entre C y Chronos
 struct CallbackManager {
     callbacks: HashMap<u64, Box<dyn Fn(*mut u8, usize) -> i32>>,
     next_id: u64,

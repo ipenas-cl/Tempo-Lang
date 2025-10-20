@@ -1,6 +1,6 @@
-# Tempo Compiler for macOS
+# Chronos Compiler for macOS
 
-Este directorio contiene el compilador de Tempo para macOS.
+Este directorio contiene el compilador de Chronos para macOS.
 
 ## Archivos
 

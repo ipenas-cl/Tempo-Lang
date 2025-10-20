@@ -17,9 +17,9 @@ Date: June 25, 2025
 - Diseñar channels determinísticos
 - Garantizar ausencia de race conditions
 
-## Teoría: CSP en Tempo
+## Teoría: CSP en Chronos
 
-Tempo usa CSP (Communicating Sequential Processes) para concurrencia determinística:
+Chronos usa CSP (Communicating Sequential Processes) para concurrencia determinística:
 
 1. **Processes independientes** que se comunican solo via channels
 2. **Channels síncronos** con semántica determinística  

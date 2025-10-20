@@ -15,11 +15,11 @@
 
 ---
 
-# The Tempo "No-Import" Philosophy
+# The Chronos "No-Import" Philosophy
 
 ## Overview
 
-Tempo embraces a radical approach to standard library design: **everything is built-in**. There are no imports, no dependencies, and no network requirements. Every Tempo program has access to the complete standard library functionality through the compiler's prelude.
+Chronos embraces a radical approach to standard library design: **everything is built-in**. There are no imports, no dependencies, and no network requirements. Every Chronos program has access to the complete standard library functionality through the compiler's prelude.
 
 ## Why No Imports?
 
@@ -39,7 +39,7 @@ Tempo embraces a radical approach to standard library design: **everything is bu
 - Autocomplete shows all available functions immediately
 
 ### 4. **Deterministic Builds**
-- Every Tempo compiler produces identical output for the same input
+- Every Chronos compiler produces identical output for the same input
 - No external dependencies means no version mismatches
 - Perfect reproducibility across time and space
 
@@ -52,10 +52,10 @@ Tempo embraces a radical approach to standard library design: **everything is bu
 
 ### The Prelude System
 
-Every Tempo program implicitly includes `prelude.tempo`, which contains:
+Every Chronos program implicitly includes `prelude.tempo`, which contains:
 
 ```tempo
-// Automatically available in every Tempo file:
+// Automatically available in every Chronos file:
 - Core types (Vec, HashMap, Option, Result, etc.)
 - String operations (string_split, string_trim, etc.)
 - I/O operations (print, println, format)
@@ -68,7 +68,7 @@ Every Tempo program implicitly includes `prelude.tempo`, which contains:
 
 ### Tree-Shaking at Compile Time
 
-The Tempo compiler performs aggressive dead code elimination:
+The Chronos compiler performs aggressive dead code elimination:
 
 1. **Parse Phase**: Identifies all functions and types actually used
 2. **Dependency Analysis**: Builds a graph of what depends on what
@@ -93,7 +93,7 @@ func main() {
 }
 ```
 
-### Tempo Approach (no imports)
+### Chronos Approach (no imports)
 ```tempo
 func main() {
     println("Starting server...")
@@ -141,13 +141,13 @@ The compiler will:
 | Rust     | Explicit imports + Cargo | No | Good | Medium |
 | Python   | Import + pip | No | No | N/A (interpreted) |
 | JavaScript | Import + npm | No | With bundlers | Varies |
-| **Tempo** | **None - all built-in** | **Yes** | **Excellent** | **Minimal** |
+| **Chronos** | **None - all built-in** | **Yes** | **Excellent** | **Minimal** |
 
 ## Philosophy in Practice
 
 The "no-import" philosophy extends beyond just the standard library:
 
-1. **Single File Programs**: Any Tempo program can be a single file
+1. **Single File Programs**: Any Chronos program can be a single file
 2. **Copy-Paste Friendly**: Share code snippets without import context
 3. **Teaching Friendly**: Students focus on logic, not module systems
 4. **Competition Ready**: Perfect for programming contests
@@ -159,14 +159,14 @@ The "no-import" philosophy extends beyond just the standard library:
 A: The prelude is just declarations. The actual implementations are in the compiler, but tree-shaking ensures only used code is included in binaries.
 
 ### Q: What about third-party libraries?
-A: Tempo encourages vendoring - copy the code you need into your project. This ensures your code always works, forever.
+A: Chronos encourages vendoring - copy the code you need into your project. This ensures your code always works, forever.
 
 ### Q: How do I organize large projects?
 A: Use modules within your project. The no-import philosophy applies to standard library only.
 
 ### Q: What about versioning?
-A: Different Tempo compiler versions may add new functions to the prelude, but existing functions never change behavior (backward compatibility).
+A: Different Chronos compiler versions may add new functions to the prelude, but existing functions never change behavior (backward compatibility).
 
 ## Conclusion
 
-The "no-import" philosophy makes Tempo unique among systems programming languages. It trades the flexibility of external dependencies for the reliability of self-contained programs. In a world where a single npm dependency can break thousands of projects, Tempo offers a refreshing alternative: **your code, depending on nothing, working forever**.
+The "no-import" philosophy makes Chronos unique among systems programming languages. It trades the flexibility of external dependencies for the reliability of self-contained programs. In a world where a single npm dependency can break thousands of projects, Chronos offers a refreshing alternative: **your code, depending on nothing, working forever**.

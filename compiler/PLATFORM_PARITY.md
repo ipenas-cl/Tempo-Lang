@@ -1,4 +1,4 @@
-# Platform Parity Status for Tempo Compiler
+# Platform Parity Status for Chronos Compiler
 
 ## Current Status (June 26, 2025)
 
@@ -26,7 +26,7 @@
 - [ ] Port parser from Linux/macOS
 - [ ] Implement code generation
 - [ ] Complete PE format generation
-- [ ] Test with simple Tempo programs
+- [ ] Test with simple Chronos programs
 
 ### 2. Standardize Across Platforms
 - [ ] Unified error messages (choose language)
@@ -50,12 +50,12 @@
 
 ## Architecture for AtomicOS
 
-The Tempo compiler will be the foundation for AtomicOS development:
+The Chronos compiler will be the foundation for AtomicOS development:
 
-1. **Bootloader**: Written in Tempo, compiled to flat binary
-2. **Kernel**: Pure Tempo with deterministic guarantees
-3. **Drivers**: Tempo with hardware abstraction layer
-4. **Userspace**: All utilities in Tempo
+1. **Bootloader**: Written in Chronos, compiled to flat binary
+2. **Kernel**: Pure Chronos with deterministic guarantees
+3. **Drivers**: Chronos with hardware abstraction layer
+4. **Userspace**: All utilities in Chronos
 
 ### Key Requirements for AtomicOS
 

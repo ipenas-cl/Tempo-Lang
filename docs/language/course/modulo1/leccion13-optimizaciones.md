@@ -16,7 +16,7 @@ Date: June 25, 2025
 - Dominar la forma SSA (Static Single Assignment)
 - Implementar optimizaciones clásicas de compiladores
 - Desarrollar análisis de flujo de datos
-- Crear un framework de optimización extensible para Tempo
+- Crear un framework de optimización extensible para Chronos
 
 ## 1. Teoría (20%)
 
@@ -1116,4 +1116,4 @@ Las optimizaciones basadas en SSA forman el corazón de los compiladores moderno
 3. **Optimizaciones poderosas**: Transformaciones complejas se vuelven tractables
 4. **Extensibilidad**: Framework permite añadir nuevas optimizaciones
 
-La implementación en Tempo demuestra que es posible construir un optimizador sofisticado con diseño limpio y eficiente.
+La implementación en Chronos demuestra que es posible construir un optimizador sofisticado con diseño limpio y eficiente.

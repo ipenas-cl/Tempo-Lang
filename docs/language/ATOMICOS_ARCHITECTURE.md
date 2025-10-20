@@ -2,7 +2,7 @@
 
 ## Overview
 
-AtomicOS es un sistema operativo determinista diseñado desde sus bases para garantizar ejecución predecible y bounded time en todas las operaciones. Está construido completamente en el lenguaje Tempo, siguiendo los principios C-E-G (Seguridad-Estabilidad-Rendimiento).
+AtomicOS es un sistema operativo determinista diseñado desde sus bases para garantizar ejecución predecible y bounded time en todas las operaciones. Está construido completamente en el lenguaje Chronos, siguiendo los principios C-E-G (Seguridad-Estabilidad-Rendimiento).
 
 ## Filosofía de Diseño
 
@@ -38,7 +38,7 @@ Cada operación en AtomicOS tiene un tiempo máximo garantizado de ejecución, p
 ┌─────────────────────────────────────────────────────────────┐
 │                    ATOMIC BOOTLOADER                        │
 ├─────────────────────────────────────────────────────────────┤
-│ • Escrito 100% en Tempo                                    │
+│ • Escrito 100% en Chronos                                    │
 │ • Tiempo de arranque predecible (<1000ms garantizado)      │
 │ • Verificación criptográfica del kernel                    │
 │ • Inicialización determinista del hardware                 │
@@ -73,7 +73,7 @@ Cada operación en AtomicOS tiene un tiempo máximo garantizado de ejecución, p
 #### 2.1 Memory Manager
 
 - **Static Memory Pools**: Todas las allocaciones son de pools pre-configurados
-- **Linear Types**: Uso de linear types de Tempo para prevenir memory leaks
+- **Linear Types**: Uso de linear types de Chronos para prevenir memory leaks
 - **No Fragmentation**: Algoritmo de pool fijo elimina fragmentación
 - **Bounded Allocation Time**: Toda allocación toma tiempo O(1)
 
@@ -212,9 +212,9 @@ syscall fork() -> Result<ProcessId>
 
 ## Herramientas de Desarrollo
 
-### Tempo Compiler para AtomicOS
+### Chronos Compiler para AtomicOS
 
-El compilador Tempo incluye extensiones específicas para AtomicOS:
+El compilador Chronos incluye extensiones específicas para AtomicOS:
 
 1. **WCET Analysis**: Análisis automático de worst-case execution time
 2. **Resource Verification**: Verificación de que los recursos declarados son suficientes
@@ -251,9 +251,9 @@ fn my_application() -> Result<(), AppError> {
 1. **x86-64**: Servidores y workstations
 2. **ARM64**: Embedded systems y Apple Silicon  
 3. **RISC-V**: Sistemas embebidos y IoT
-4. **TempoCore**: ISA personalizado para máximo determinismo
+4. **ChronosCore**: ISA personalizado para máximo determinismo
 
-### TempoCore ISA
+### ChronosCore ISA
 
 Instruction Set Architecture diseñado específicamente para AtomicOS:
 
@@ -292,7 +292,7 @@ Instruction Set Architecture diseñado específicamente para AtomicOS:
 ## Roadmap de Desarrollo
 
 ### Fase 1: Bootloader y Kernel Base (Q3 2025)
-- [ ] Bootloader básico en Tempo
+- [ ] Bootloader básico en Chronos
 - [ ] Memory manager con pools estáticos
 - [ ] Task scheduler EDF/RM
 - [ ] Interrupt handling básico
@@ -310,7 +310,7 @@ Instruction Set Architecture diseñado específicamente para AtomicOS:
 - [ ] Toolchain integrado
 
 ### Fase 4: Hardware y Optimización (Q2 2026)
-- [ ] TempoCore ISA specification
+- [ ] ChronosCore ISA specification
 - [ ] FPGA implementation
 - [ ] Hardware synthesis
 - [ ] Performance optimization
@@ -336,7 +336,7 @@ Instruction Set Architecture diseñado específicamente para AtomicOS:
 
 ## Conclusión
 
-AtomicOS representa una nueva generación de sistemas operativos que priorizan el determinismo y la predictabilidad sobre la flexibilidad tradicional. Al estar construido completamente en Tempo, hereda todas las garantías del lenguaje y las amplifica a nivel de sistema operativo.
+AtomicOS representa una nueva generación de sistemas operativos que priorizan el determinismo y la predictabilidad sobre la flexibilidad tradicional. Al estar construido completamente en Chronos, hereda todas las garantías del lenguaje y las amplifica a nivel de sistema operativo.
 
 El resultado es un OS que puede proporcionar garantías hard real-time mientras mantiene la usabilidad y features de un sistema operativo moderno. Esto lo hace ideal para aplicaciones críticas donde la predictibilidad es más importante que el máximo throughput.
 

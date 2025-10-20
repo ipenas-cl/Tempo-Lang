@@ -14,13 +14,13 @@ Date: June 25, 2025
 
 ## Objetivos
 - Diseñar framework de testing determinístico
-- Implementar debugging tools para Tempo
+- Implementar debugging tools para Chronos
 - Crear property-based testing
 - Desarrollar herramientas de profiling determinístico
 
 ## Teoría: Testing Determinístico
 
-En Tempo, el testing debe ser completamente reproducible:
+En Chronos, el testing debe ser completamente reproducible:
 
 1. **Mismos inputs** → **mismos outputs** → **mismo timing**
 2. **Seeds determinísticos** para generación de datos de prueba

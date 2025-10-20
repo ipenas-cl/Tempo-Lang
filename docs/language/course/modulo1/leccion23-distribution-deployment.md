@@ -15,12 +15,12 @@ Date: June 25, 2025
 ## Objetivos
 - Crear sistema de distribución determinística
 - Implementar deployment automático y rollback
-- Diseñar infrastructure-as-code para Tempo
+- Diseñar infrastructure-as-code para Chronos
 - Desarrollar monitoring y observability
 
 ## Teoría: Deployment Determinístico
 
-El deployment de aplicaciones Tempo debe garantizar:
+El deployment de aplicaciones Chronos debe garantizar:
 
 1. **Reproducibilidad exacta** en cualquier entorno
 2. **Rollback inmediato** sin pérdida de determinismo  
@@ -224,8 +224,8 @@ impl DependencyResolver {
 ## Container Deployment Determinístico
 
 ```tempo
-// Container system optimizado para Tempo
-struct TempoContainer {
+// Container system optimizado para Chronos
+struct ChronosContainer {
     image: ContainerImage,
     runtime_config: RuntimeConfig,
     resource_limits: ResourceLimits,
@@ -247,7 +247,7 @@ struct RuntimeConfig {
     environment_variables: BTreeMap<String, String>, // Sorted for determinism
 }
 
-impl TempoContainer {
+impl ChronosContainer {
     fn deploy(&mut self, target_environment: &Environment) -> Result<Deployment, DeploymentError> {
         // 1. Verify container image integrity
         self.verify_image_integrity()?;
@@ -709,7 +709,7 @@ impl StructuredLogging {
 
 ## Práctica: Pipeline de CI/CD Completo
 
-Implementa un pipeline completo de CI/CD para aplicaciones Tempo que incluya:
+Implementa un pipeline completo de CI/CD para aplicaciones Chronos que incluya:
 
 1. Build reproducible con verificación
 2. Testing automático en múltiples entornos

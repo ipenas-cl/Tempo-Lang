@@ -1,10 +1,10 @@
-# Migration Guide: Moving to Tempo
+# Migration Guide: Moving to Chronos
 
-This guide helps developers migrate existing projects to Tempo from other languages.
+This guide helps developers migrate existing projects to Chronos from other languages.
 
 ## Quick Comparison
 
-| Feature | Python | Go | Rust | **Tempo** |
+| Feature | Python | Go | Rust | **Chronos** |
 |---------|--------|-----|------|-----------|
 | Memory Safety | ✓ (GC) | ✓ (GC) | ✓ | ✓ |
 | Deterministic Timing | ✗ | ✗ | ✗ | **✓** |
@@ -33,7 +33,7 @@ server = HTTPServer(('localhost', 8080), Handler)
 server.serve_forever()
 ```
 
-**Tempo Equivalent:**
+**Chronos Equivalent:**
 ```tempo
 fn main() -> i32 {
     let server = listen_tcp("localhost:8080");
@@ -42,7 +42,7 @@ fn main() -> i32 {
         let conn = server.accept();
         let request = conn.read(1024);
         
-        conn.write("HTTP/1.1 200 OK\r\n\r\nHello from Tempo");
+        conn.write("HTTP/1.1 200 OK\r\n\r\nHello from Chronos");
         conn.close();
     }
 }
@@ -82,7 +82,7 @@ func main() {
 }
 ```
 
-**Tempo Equivalent:**
+**Chronos Equivalent:**
 ```tempo
 fn worker(id: i32, jobs: Channel<i32>) {
     while true {
@@ -137,7 +137,7 @@ fn main() {
 }
 ```
 
-**Tempo Equivalent:**
+**Chronos Equivalent:**
 ```tempo
 fn read_config() -> Result<string, string> {
     let content = read_file("config.toml");
@@ -171,7 +171,7 @@ fn main() -> i32 {
 
 If migrating from:
 - **PostgreSQL/MySQL**: Consider our Redis-killer example for in-memory needs
-- **MongoDB**: Tempo's deterministic storage provides ACID guarantees
+- **MongoDB**: Chronos's deterministic storage provides ACID guarantees
 - **SQLite**: Embed data directly in your binary
 
 ### 2. Web Services
@@ -184,7 +184,7 @@ Migration path:
 
 ### 3. CLI Tools
 
-Tempo excels at CLI tools:
+Chronos excels at CLI tools:
 - Zero startup time
 - Small binaries
 - No runtime dependencies
@@ -200,7 +200,7 @@ Perfect for:
 
 ## Performance Expectations
 
-| Operation | Python | Go | Rust | **Tempo** |
+| Operation | Python | Go | Rust | **Chronos** |
 |-----------|--------|-----|------|-----------|
 | HTTP Request | 15K RPS | 120K RPS | 380K RPS | **450K RPS** |
 | JSON Parse | 50 MB/s | 200 MB/s | 500 MB/s | **600 MB/s** |
@@ -210,9 +210,9 @@ Perfect for:
 ## Migration Checklist
 
 - [ ] Identify external dependencies
-- [ ] Map them to Tempo built-ins
+- [ ] Map them to Chronos built-ins
 - [ ] Convert import statements (remove them!)
-- [ ] Update syntax to Tempo style
+- [ ] Update syntax to Chronos style
 - [ ] Add WCET annotations where needed
 - [ ] Test deterministic behavior
 - [ ] Benchmark performance improvements

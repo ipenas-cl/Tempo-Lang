@@ -1,4 +1,4 @@
-# Tempo Language Logo & Branding
+# Chronos Language Logo & Branding
 
 ## Official Logo (The Three Notes)
 
@@ -91,7 +91,7 @@ Together they form the perfect C Major chord of deterministic computing.
 ### For Source Files
 Use the mini logo `[T∞]` in source file headers:
 ```tempo
-// [T∞] Tempo - The Deterministic Programming Language
+// [T∞] Chronos - The Deterministic Programming Language
 // Author: Ignacio Peña Sepúlveda
 // Date: June 25, 2025
 ```
@@ -114,7 +114,7 @@ Use the compact logo for command-line tools:
 - Dark: #2C3E50 (Dark Blue-Gray - representing robustness)
 
 ### Logo Meaning
-- **T** - Tempo, Time, Timing
+- **T** - Chronos, Time, Timing
 - **∞** - Infinite reliability, continuous determinism
 - **Clock Symbol** - Precise timing, WCET guarantees
 - **Box Frame** - Bounded execution, contained complexity

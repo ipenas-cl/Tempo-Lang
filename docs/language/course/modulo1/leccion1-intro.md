@@ -16,7 +16,7 @@ Date: June 25, 2025
 
 - Entender qué es un compilador y por qué es importante
 - Conocer las fases de compilación
-- Ver nuestro primer programa en Tempo
+- Ver nuestro primer programa en Chronos
 - Preparar el ambiente de desarrollo
 
 ## 🧠 Teoría: ¿Qué es un compilador?
@@ -41,7 +41,7 @@ Código Fuente (.tempo)
 Ejecutable (.exe)
 ```
 
-### ¿Por qué Tempo?
+### ¿Por qué Chronos?
 
 Los lenguajes actuales tienen problemas:
 - **C/C++**: Inseguros, undefined behavior
@@ -49,7 +49,7 @@ Los lenguajes actuales tienen problemas:
 - **Python**: Demasiado lento
 - **Rust**: Complejo de aprender
 
-Tempo resuelve estos problemas:
+Chronos resuelve estos problemas:
 - **Determinístico**: Mismo input → mismo output → mismo tiempo
 - **Seguro**: Sin null pointers, sin buffer overflows
 - **Rápido**: Performance cercana al hardware
@@ -73,14 +73,14 @@ int main() {
 print("Hello, World!")
 ```
 
-**Tempo:**
+**Chronos:**
 ```tempo
 function main() {
     print("Hello, deterministic world!");
 }
 ```
 
-### 2. Anatomía de un programa Tempo
+### 2. Anatomía de un programa Chronos
 
 ```tempo
 // Esto es un comentario
@@ -88,12 +88,12 @@ function main() {
 // Función principal - punto de entrada
 function main() {
     // Declaración de variable con tipo inferido
-    let message = "Hello, Tempo!";
+    let message = "Hello, Chronos!";
     
     // Llamada a función built-in
     print(message);
     
-    // Tempo garantiza que esto siempre toma el mismo tiempo
+    // Chronos garantiza que esto siempre toma el mismo tiempo
     let result = fibonacci(10) within 100µs;
     print("Fibonacci(10) = ${result}");
 }
@@ -194,7 +194,7 @@ tempo-compiler/
 ├── stage0/          # Bootstrap en assembly
 │   ├── bootstrap.s
 │   └── Makefile
-├── stage1/          # Compilador en Tempo básico
+├── stage1/          # Compilador en Chronos básico
 │   └── compiler.tempo
 ├── stage2/          # Compilador completo
 │   ├── lexer.tempo
@@ -206,7 +206,7 @@ tempo-compiler/
 
 ### 3. Compilar y ejecutar Hello World
 
-Por ahora usaremos un script que simula Tempo:
+Por ahora usaremos un script que simula Chronos:
 
 ```bash
 # Crear hello.tempo
@@ -229,7 +229,7 @@ EOF
 Modifica el programa para que:
 1. Imprima tu nombre
 2. Imprima la fecha actual
-3. Imprima un número aleatorio (¿por qué esto sería problemático en Tempo?)
+3. Imprima un número aleatorio (¿por qué esto sería problemático en Chronos?)
 
 ### Ejercicio 2: Análisis de lenguajes
 Compara estos fragmentos y responde:
@@ -250,7 +250,7 @@ std::io::stdin().read_line(&mut buffer)?;
 ```
 
 ```tempo
-// Tempo
+// Chronos
 let buffer: string<10> = read_line() within 1ms;
 // Tamaño fijo, tiempo garantizado
 ```
@@ -281,6 +281,6 @@ El primer compilador fue escrito por Grace Hopper en 1952. Se llamaba A-0 y trad
 
 ---
 
-**Resumen**: Un compilador es un traductor. Tempo es un lenguaje diseñado para ser determinístico, seguro y rápido. En las próximas lecciones construiremos nuestro propio compilador desde cero.
+**Resumen**: Un compilador es un traductor. Chronos es un lenguaje diseñado para ser determinístico, seguro y rápido. En las próximas lecciones construiremos nuestro propio compilador desde cero.
 
 [← Índice](../README.md) | [Lección 2: Teoría de Lenguajes →](leccion2-teoria.md)

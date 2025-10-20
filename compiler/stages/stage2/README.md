@@ -15,16 +15,16 @@
 
 ---
 
-# Tempo Stage 2 Compiler
+# Chronos Stage 2 Compiler
 
-Advanced Tempo compiler with full optimization and deterministic code generation.
+Advanced Chronos compiler with full optimization and deterministic code generation.
 
 ## Overview
 
-Stage 2 is the production-ready Tempo compiler written in Tempo itself. It provides:
+Stage 2 is the production-ready Chronos compiler written in Chronos itself. It provides:
 
 - Advanced optimization passes with deterministic guarantees
-- Multiple target platform support (x86_64, ARM64, RISC-V, TempoCore)
+- Multiple target platform support (x86_64, ARM64, RISC-V, ChronosCore)
 - WCET (Worst-Case Execution Time) analysis and bounds checking
 - Deterministic compilation with reproducible builds
 - Full debugging and profiling support
@@ -46,7 +46,7 @@ Stage 2 is the production-ready Tempo compiler written in Tempo itself. It provi
 
 ### Test Files
 
-- `parser_example.tempo` - Example Tempo program for testing
+- `parser_example.tempo` - Example Chronos program for testing
 - `parser_tests.tempo` - Comprehensive parser test suite
 
 ## 🚀 Key Features
@@ -81,7 +81,7 @@ Stage 2 is the production-ready Tempo compiler written in Tempo itself. It provi
 - **x86_64 Linux/Windows** - Full support with optimized code generation
 - **ARM64 Linux** - Native ARM64 code generation
 - **RISC-V 64** - RISC-V instruction set support
-- **TempoCore** - Custom deterministic CPU architecture
+- **ChronosCore** - Custom deterministic CPU architecture
 
 ## 🏗️ Compilation Pipeline
 
@@ -199,7 +199,7 @@ cd stage2
 ./example
 ```
 
-## 🧪 Example Tempo Programs
+## 🧪 Example Chronos Programs
 
 ### Deterministic Function with WCET Bound
 
@@ -328,10 +328,10 @@ Stage 2 demonstrates advanced compiler construction techniques:
 
 - **Profile-Guided Optimization** - Use runtime profiles to guide optimization
 - **Link-Time Optimization** - Whole-program optimization across modules
-- **Hardware Synthesis** - Generate custom hardware from Tempo code
+- **Hardware Synthesis** - Generate custom hardware from Chronos code
 - **Formal Verification** - Prove correctness of generated code
 - **Incremental Compilation** - Fast recompilation of changed modules
 
 ---
 
-*Stage 2 represents the culmination of the Tempo bootstrap process - a fully self-hosting, production-ready compiler with unique deterministic guarantees.*
+*Stage 2 represents the culmination of the Chronos bootstrap process - a fully self-hosting, production-ready compiler with unique deterministic guarantees.*

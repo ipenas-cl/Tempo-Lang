@@ -589,6 +589,6 @@ Zero lines of C code remain in the self-hosted compiler.
 ---
 
 **Author**: ipenas-cl + Claude Code (Lead)
-**Repository**: https://github.com/ipenas-cl/Tempo-Lang
+**Repository**: https://github.com/ipenas-cl/Chronos-Lang
 **License**: [Project License]
 **Date**: October 20, 2025

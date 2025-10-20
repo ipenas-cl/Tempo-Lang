@@ -13,13 +13,13 @@ Date: June 25, 2025
 # Lección 18: Macros y Metaprogramación
 
 ## Objetivos
-- Diseñar sistema de macros para Tempo
+- Diseñar sistema de macros para Chronos
 - Implementar metaprogramación determinística
 - Crear DSLs (Domain Specific Languages)
 
-## Teoría: Macros en Tempo
+## Teoría: Macros en Chronos
 
-Los macros en Tempo están diseñados para:
+Los macros en Chronos están diseñados para:
 
 1. **Generación de código en compile-time**
 2. **Preservar determinismo** en todo momento

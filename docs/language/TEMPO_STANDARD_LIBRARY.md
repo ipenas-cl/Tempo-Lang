@@ -1,11 +1,11 @@
-# Tempo Standard Library - Zero Imports Architecture
+# Chronos Standard Library - Zero Imports Architecture
 
 ## 🚫 NO IMPORTS: La Filosofía Central
 
-**En Tempo NO EXISTEN los imports.** Toda la biblioteca estándar está disponible globalmente en cada archivo.
+**En Chronos NO EXISTEN los imports.** Toda la biblioteca estándar está disponible globalmente en cada archivo.
 
 ```tempo
-// ❌ MALO - No existe en Tempo
+// ❌ MALO - No existe en Chronos
 import std.net
 import std.time
 
@@ -25,7 +25,7 @@ fn main() -> i32 {
 El compilador **siempre** incluye automáticamente `src/std/prelude.tempo`:
 
 ```tempo
-// src/std/prelude.tempo - Incluido en CADA programa Tempo
+// src/std/prelude.tempo - Incluido en CADA programa Chronos
 // NO es un import - es parte del lenguaje mismo
 
 // Tipos básicos disponibles globalmente
@@ -407,7 +407,7 @@ tempo build --release --tiny main.tempo
 
 ## 📊 Comparación con Otros Lenguajes
 
-| Feature | C/C++ | Rust | Go | **Tempo** |
+| Feature | C/C++ | Rust | Go | **Chronos** |
 |---------|-------|------|-----|-----------|
 | Imports necesarios | ✅ Sí | ✅ Sí | ✅ Sí | ❌ **No** |
 | Biblioteca estándar size | ~100MB | ~50MB | ~30MB | **~5MB** |
@@ -461,11 +461,11 @@ fn handle_client(conn: TCPConn, db: &HashMap<string, string>) {
 }
 ```
 
-**Sin un solo import.** Todo built-in. Así es Tempo.
+**Sin un solo import.** Todo built-in. Así es Chronos.
 
 ## 🏁 Conclusión
 
-El sistema de no-imports de Tempo no es una limitación, es una **liberación**:
+El sistema de no-imports de Chronos no es una limitación, es una **liberación**:
 
 - **Liberación** de la complejidad de dependencias
 - **Liberación** del dependency hell
@@ -474,6 +474,6 @@ El sistema de no-imports de Tempo no es una limitación, es una **liberación**:
 
 Todo lo que necesitas para programar sistemas, aplicaciones, juegos, servidores, y hasta sistemas operativos está ahí, esperándote, sin imports.
 
-**Welcome to Tempo. Zero imports. Infinite possibilities.**
+**Welcome to Chronos. Zero imports. Infinite possibilities.**
 
 [T∞]

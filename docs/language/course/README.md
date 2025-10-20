@@ -15,7 +15,7 @@
 
 ---
 
-# Curso Completo: Compiladores y Lenguajes de Programación con Tempo
+# Curso Completo: Compiladores y Lenguajes de Programación con Chronos
 
 ## 📚 Índice del Curso
 
@@ -81,13 +81,13 @@ Cada lección incluye:
 - **Teoría**: Conceptos explicados de forma clara
 - **Práctica**: Código real que puedes ejecutar
 - **Ejercicios**: Para reforzar lo aprendido
-- **Proyecto**: Construcción incremental de Tempo
+- **Proyecto**: Construcción incremental de Chronos
 
 ## 🚀 ¿Por qué este curso es único?
 
 1. **Aprendes haciendo**: No solo teoría, construyes un compilador real
 2. **Desde cero absoluto**: Empezamos en assembly, sin dependencias
-3. **Proyecto real**: Tempo no es un toy language, es producción-ready
+3. **Proyecto real**: Chronos no es un toy language, es producción-ready
 4. **Open source**: Todo el código está disponible
 5. **Democratizador**: Hacemos accesible conocimiento tradicionalmente elitista
 
@@ -113,20 +113,12 @@ Para consolidar el aprendizaje
 Qué preparar o pensar
 ```
 
-## 🎓 Certificación
-
-Al completar el curso y el proyecto final, recibirás:
-- Certificado de completación
-- Tu compilador funcionando
-- Conocimiento que pocas personas en el mundo tienen
-- Entrada a la comunidad Tempo
-
 ## 🌟 Proyecto Final
 
 Elegir uno:
-1. Agregar una característica nueva a Tempo
-2. Port Tempo a una arquitectura nueva
-3. Crear una aplicación innovadora en Tempo
+1. Agregar una característica nueva a Chronos
+2. Port Chronos a una arquitectura nueva
+3. Crear una aplicación innovadora en Chronos
 4. Contribuir al AtomicOS
 
 ---

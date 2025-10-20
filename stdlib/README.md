@@ -1,6 +1,6 @@
-# Tempo Standard Library
+# Chronos Standard Library
 
-Core data types, collections, and system interfaces for Tempo applications.
+Core data types, collections, and system interfaces for Chronos applications.
 
 ## Structure
 

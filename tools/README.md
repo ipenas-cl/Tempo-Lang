@@ -1,6 +1,6 @@
-# Tempo Development Tools
+# Chronos Development Tools
 
-Professional tools for developing, debugging, and monitoring Tempo applications.
+Professional tools for developing, debugging, and monitoring Chronos applications.
 
 ## Tools
 
@@ -30,7 +30,7 @@ Professional tools for developing, debugging, and monitoring Tempo applications.
 
 ## Installation
 
-All tools are included with Tempo installation and accessible via:
+All tools are included with Chronos installation and accessible via:
 ```bash
 tempo <tool> [options]
 ```

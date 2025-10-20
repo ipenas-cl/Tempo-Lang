@@ -17,11 +17,11 @@
 
 # Tree-Shaking Visualization
 
-## How Tempo's Compiler Optimizes Your Code
+## How Chronos's Compiler Optimizes Your Code
 
 ### The Prelude: What's Available
 
-The Tempo prelude contains ~250+ built-in functions covering:
+The Chronos prelude contains ~250+ built-in functions covering:
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -163,7 +163,7 @@ Full Featured    │     1.2 MB       │  2.5 MB │   52%
 #### Embedded System (32KB Flash)
 ```
 Standard Go/Rust: Won't fit (minimum ~1MB)
-Tempo with Tree-Shaking: 28KB ✓
+Chronos with Tree-Shaking: 28KB ✓
 
 Included: Core logic + minimal I/O
 Excluded: Everything else
@@ -174,7 +174,7 @@ Excluded: Everything else
 Cold Start Times:
 - Node.js: 200-400ms
 - Go: 50-100ms  
-- Tempo: 5-10ms ⚡
+- Chronos: 5-10ms ⚡
 
 Why? Tiny binary = fast load
 ```
@@ -188,7 +188,7 @@ CMD ["/myapp"]
 Image Sizes:
 - Go app: 10-50MB
 - Rust app: 5-20MB
-- Tempo app: 200KB-2MB
+- Chronos app: 200KB-2MB
 ```
 
 ### Tree-Shaking Commands
@@ -248,7 +248,7 @@ ls -lh main-*
 
 ### Conclusion
 
-Tree-shaking in Tempo isn't just an optimization - it's a fundamental design principle. By including everything in the prelude but only compiling what you use, Tempo achieves:
+Tree-shaking in Chronos isn't just an optimization - it's a fundamental design principle. By including everything in the prelude but only compiling what you use, Chronos achieves:
 
 - **Tiny binaries** perfect for embedded systems
 - **Fast startup** ideal for serverless

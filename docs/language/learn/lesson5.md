@@ -143,7 +143,7 @@ fn main() -> i32 {
         perform_calculation(choice, num1, num2);
     }
     
-    print_line("Thank you for using Tempo Calculator!");
+    print_line("Thank you for using Chronos Calculator!");
     return 0;
 }
 ```
@@ -303,15 +303,15 @@ Congratulations! You've now learned:
 ## Next Steps
 
 You're ready to:
-1. Explore more advanced Tempo features
+1. Explore more advanced Chronos features
 2. Build your own projects
-3. Contribute to the Tempo community
+3. Contribute to the Chronos community
 4. Learn about systems programming
 
 Check out:
-- [Tempo Language Reference](../tempcore_manual.md)
+- [Chronos Language Reference](../tempcore_manual.md)
 - [Example Projects](../../examples/)
-- [Community Forum](https://github.com/ipenas-cl/Tempo-Lang/discussions)
+- [Community Forum](https://github.com/ipenas-cl/Chronos-Lang/discussions)
 
 ---
 

@@ -1,6 +1,6 @@
-# Tempo Runtime - AtomicOS
+# Chronos Runtime - AtomicOS
 
-The deterministic operating system kernel and runtime for Tempo applications.
+The deterministic operating system kernel and runtime for Chronos applications.
 
 ## Structure
 

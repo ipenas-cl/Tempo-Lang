@@ -20,7 +20,7 @@ Date: June 25, 2025
 
 ## Teoría: Optimización Determinística
 
-En Tempo, las optimizaciones deben:
+En Chronos, las optimizaciones deben:
 
 1. **Preservar semántica** exacta del programa
 2. **Mantener bounds WCET** verificables
@@ -324,7 +324,7 @@ impl MemoryOptimizer {
                         // Insertar prefetch hint
                         let prefetch_inst = Instruction::Prefetch {
                             address: prefetch_target,
-                            hint_type: PrefetchHint::Temporal,
+                            hint_type: PrefetchHint::Chronosral,
                         };
                         
                         block.instructions.insert(i, prefetch_inst);

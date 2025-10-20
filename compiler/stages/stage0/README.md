@@ -15,13 +15,13 @@
 
 ---
 
-# Tempo Bootstrap Stage 0
+# Chronos Bootstrap Stage 0
 
 El compilador más pequeño del mundo - **500 líneas de assembly puro**.
 
 ## ¿Qué es esto?
 
-Este es el bootstrap inicial de Tempo. Un compilador minimalista escrito completamente en assembly x86_64 que puede compilar un subset básico de Tempo, suficiente para compilar el siguiente stage.
+Este es el bootstrap inicial de Chronos. Un compilador minimalista escrito completamente en assembly x86_64 que puede compilar un subset básico de Chronos, suficiente para compilar el siguiente stage.
 
 ## Características
 
@@ -32,7 +32,7 @@ Este es el bootstrap inicial de Tempo. Un compilador minimalista escrito complet
 - ✅ < 500 líneas de código
 - ✅ Compila en < 1 segundo
 
-## Subset de Tempo soportado
+## Subset de Chronos soportado
 
 ```tempo
 function main() {
@@ -88,15 +88,15 @@ hello.tempo → [TOKENIZER] → [PARSER] → [AST] → [CODEGEN] → hello.s
 Una vez que este bootstrap funciona, lo usamos para compilar `stage1.tempo`:
 
 ```tempo
-// stage1.tempo - Compilador más completo escrito en Tempo
+// stage1.tempo - Compilador más completo escrito en Chronos
 type Token = Keyword(string) | Identifier(string) | Number(i64) | ...
 
 function tokenize(source: string) -> Array<Token> {
-    // Tokenizer completo en Tempo
+    // Tokenizer completo en Chronos
 }
 
 function parse(tokens: Array<Token>) -> AST {
-    // Parser completo en Tempo  
+    // Parser completo en Chronos  
 }
 
 function codegen(ast: AST) -> string {

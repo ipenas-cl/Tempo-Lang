@@ -30,7 +30,7 @@ Un parser recursivo descendente es un tipo de analizador sintáctico que constru
 3. **Eficiencia**: Sin overhead de tablas de parsing
 4. **Predictibilidad**: Ideal para sistemas de tiempo real
 
-### Gramática Simplificada de Tempo
+### Gramática Simplificada de Chronos
 
 ```
 programa     ::= declaracion*
@@ -786,7 +786,7 @@ Ventajas:
 
 ## Proyecto Integrador
 
-Implementa un parser completo para un subconjunto de Tempo que incluya:
+Implementa un parser completo para un subconjunto de Chronos que incluya:
 - Funciones con parámetros y tipos
 - Estructuras básicas
 - Control de flujo (if/else, while)

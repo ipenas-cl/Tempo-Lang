@@ -108,10 +108,10 @@ make test-uefi
 bootloader/
 ├── bios/
 │   ├── boot.s          # Stage 1 bootloader (assembly)
-│   ├── stage2.tempo    # Stage 2 bootloader (Tempo)
+│   ├── stage2.tempo    # Stage 2 bootloader (Chronos)
 │   └── link.ld         # Linker script for BIOS
 ├── uefi/
-│   ├── boot.tempo      # UEFI bootloader (Tempo)
+│   ├── boot.tempo      # UEFI bootloader (Chronos)
 │   ├── uefi.tempo      # UEFI protocol definitions
 │   └── link.ld         # Linker script for UEFI
 ├── common/
@@ -137,7 +137,7 @@ The bootloader passes the following information to the kernel:
 ## Requirements
 
 - NASM assembler
-- Tempo compiler
+- Chronos compiler
 - GNU LD linker
 - QEMU (for testing)
 - OVMF UEFI firmware (for UEFI testing)

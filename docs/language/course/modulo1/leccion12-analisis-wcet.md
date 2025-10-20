@@ -16,7 +16,7 @@ Date: June 25, 2025
 - Comprender la importancia del análisis WCET en sistemas críticos
 - Implementar análisis estático de tiempo de ejecución
 - Desarrollar técnicas de análisis de flujo y cache
-- Garantizar tiempos de respuesta predecibles en Tempo
+- Garantizar tiempos de respuesta predecibles en Chronos
 
 ## 1. Teoría (20%)
 
@@ -59,7 +59,7 @@ WCET = Path Analysis + Low-Level Analysis + Cache Analysis + Pipeline Analysis
 ### Representación del CFG para WCET
 
 ```tempo
-// wcet_analyzer.tempo - Análisis WCET para Tempo
+// wcet_analyzer.tempo - Análisis WCET para Chronos
 
 struct WCETAnalyzer {
     cfg: *ControlFlowGraph,
@@ -839,4 +839,4 @@ El análisis WCET es fundamental para sistemas críticos y de tiempo real. Las t
 3. **Certificación**: Cumplir estándares (DO-178C, ISO 26262)
 4. **Predictibilidad**: Diseñar sistemas con timing predecible
 
-La implementación en Tempo combina análisis estático riguroso con conocimiento profundo del hardware target, permitiendo generar código eficiente con garantías temporales fuertes.
+La implementación en Chronos combina análisis estático riguroso con conocimiento profundo del hardware target, permitiendo generar código eficiente con garantías temporales fuertes.

@@ -15,13 +15,13 @@
 
 ---
 
-# Tempo Philosophy: The Three Notes of Computing
+# Chronos Philosophy: The Three Notes of Computing
 
 **[T∞]** - Where Time Meets Infinity
 
 ## 🎵 The Musical Metaphor
 
-Just as tempo in music defines the pace and rhythm, Tempo the language defines the pace and rhythm of computation. The three fundamental notes of our philosophy create a perfect harmony:
+Just as tempo in music defines the pace and rhythm, Chronos the language defines the pace and rhythm of computation. The three fundamental notes of our philosophy create a perfect harmony:
 
 ### 🎼 The Three Notes
 
@@ -33,7 +33,7 @@ Just as tempo in music defines the pace and rhythm, Tempo the language defines t
 Together they form a perfect major chord: C-E-G
 ```
 
-## 🎹 The Tempo Triad
+## 🎹 The Chronos Triad
 
 ```
                     DETERMINISM
@@ -99,7 +99,7 @@ fn fast_operation() -> Result {
 [ T ∞ ]
   │ │
   │ └── Infinity: Endless reliability, continuous determinism
-  └──── Tempo: Time, Timing, Temporal guarantees
+  └──── Chronos: Time, Timing, Chronosral guarantees
 
 The brackets [ ] represent:
 - Bounded execution (nothing escapes the bounds)
@@ -121,9 +121,9 @@ Determinism enables:
 └── Democracy (Everyone gets the same guarantees)
 ```
 
-## 🎼 Tempo Variations
+## 🎼 Chronos Variations
 
-### Largo (Slow Tempo) - Maximum Safety
+### Largo (Slow Chronos) - Maximum Safety
 ```tempo
 #[tempo(largo)]
 fn critical_medical_operation() {
@@ -132,7 +132,7 @@ fn critical_medical_operation() {
 }
 ```
 
-### Andante (Walking Tempo) - Balanced
+### Andante (Walking Chronos) - Balanced
 ```tempo
 #[tempo(andante)]
 fn normal_operation() {
@@ -141,7 +141,7 @@ fn normal_operation() {
 }
 ```
 
-### Presto (Fast Tempo) - Maximum Performance
+### Presto (Fast Chronos) - Maximum Performance
 ```tempo
 #[tempo(presto)]
 fn high_frequency_trading() {
@@ -150,12 +150,12 @@ fn high_frequency_trading() {
 }
 ```
 
-## 🎵 The Tempo Manifesto
+## 🎵 The Chronos Manifesto
 
 ```
 In the symphony of computing,
 Where chaos often reigns,
-Tempo brings a steady rhythm,
+Chronos brings a steady rhythm,
 That forever remains.
 
 Three notes in perfect harmony,
@@ -171,7 +171,7 @@ That's all you'll ever need.
 [T∞] marks our promise,
 Time bounded, yet infinite in scope,
 For every developer worldwide,
-Tempo brings deterministic hope.
+Chronos brings deterministic hope.
 ```
 
 ## 🎹 Practical Applications of the Three Notes
@@ -191,7 +191,7 @@ Tempo brings deterministic hope.
 - Cache-friendly layouts (deterministic memory)
 - Vectorization (when deterministic)
 
-## 🌍 The Global Tempo
+## 🌍 The Global Chronos
 
 Different regions, same rhythm:
 
@@ -200,7 +200,7 @@ Different regions, same rhythm:
 - **Nairobi Medical**: Operates with the same reliability as Swiss hospitals
 - **Rural School**: Learns with the same tools as MIT
 
-## 🎯 The Tempo Promise
+## 🎯 The Chronos Promise
 
 ```
 [T∞] = Bounded Time + Infinite Reliability
@@ -213,10 +213,10 @@ Where:
 
 ---
 
-**"In Tempo, we don't chase performance at the cost of correctness.**  
+**"In Chronos, we don't chase performance at the cost of correctness.**  
 **We achieve performance through correctness."**
 
-*The three notes of Tempo - Security, Stability, and Performance -*  
+*The three notes of Chronos - Security, Stability, and Performance -*  
 *create a harmony that resonates with determinism.*
 
 *Ignacio Peña Sepúlveda*  

@@ -19,7 +19,7 @@ Date: June 25, 2025
 
 ## Teoría: Memory Pools
 
-En Tempo, la gestión de memoria debe ser completamente determinística. Esto significa:
+En Chronos, la gestión de memoria debe ser completamente determinística. Esto significa:
 
 1. **Sin malloc/free dinámicos** - tiempo de ejecución variable
 2. **Memory pools** - bloques pre-asignados 
@@ -278,7 +278,7 @@ struct RBTreePool {
 ## Verificación de Seguridad
 
 ```tempo
-// Tempo verifica automáticamente:
+// Chronos verifica automáticamente:
 fn memory_safety_check() {
     let handle = pool.allocate().unwrap();
     

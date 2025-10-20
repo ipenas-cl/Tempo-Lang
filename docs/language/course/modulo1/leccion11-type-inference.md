@@ -14,7 +14,7 @@ Date: June 25, 2025
 
 ## Objetivos de la Lección
 - Comprender el algoritmo de inferencia de tipos Hindley-Milner
-- Implementar inferencia de tipos completa para Tempo
+- Implementar inferencia de tipos completa para Chronos
 - Extender el sistema con features más allá de HM clásico
 - Optimizar el proceso de inferencia para compilación rápida
 
@@ -918,4 +918,4 @@ La inferencia de tipos Hindley-Milner y sus extensiones permiten escribir códig
 3. **Performance**: Inferencia eficiente
 4. **Extensibilidad**: Base para features avanzados
 
-El sistema implementado para Tempo combina la elegancia teórica de HM con optimizaciones prácticas necesarias para un compilador de producción.
+El sistema implementado para Chronos combina la elegancia teórica de HM con optimizaciones prácticas necesarias para un compilador de producción.

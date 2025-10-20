@@ -13,14 +13,14 @@ Date: June 25, 2025
 # Lección 24: Interoperabilidad y Integración
 
 ## Objetivos
-- Diseñar bridges entre Tempo y otros lenguajes
+- Diseñar bridges entre Chronos y otros lenguajes
 - Implementar APIs determinísticas para integración
 - Crear adaptadores para sistemas legacy
 - Desarrollar migration tools automáticas
 
 ## Teoría: Interoperabilidad Determinística
 
-La interoperabilidad de Tempo debe mantener las garantías de determinismo incluso cuando interactúa con sistemas no-determinísticos:
+La interoperabilidad de Chronos debe mantener las garantías de determinismo incluso cuando interactúa con sistemas no-determinísticos:
 
 1. **Boundary isolation** - Aislar comportamiento no-determinístico
 2. **Deterministic wrappers** - Envolver sistemas externos
@@ -105,7 +105,7 @@ impl DeterministicWrapper {
                     // Deterministic backoff
                     sleep_deterministic(Duration::from_millis(call.retry_delay_ms() * attempt));
                 },
-                Err(LegacyError::TemporaryFailure) => {
+                Err(LegacyError::ChronosraryFailure) => {
                     if attempt >= max_attempts {
                         return Err(WrapperError::MaxRetriesExceeded);
                     }
@@ -131,7 +131,7 @@ struct MigrationTracker {
 struct MigrationPhase {
     name: String,
     legacy_percentage: f64,    // Porcentaje de tráfico a legacy system
-    tempo_percentage: f64,     // Porcentaje de tráfico a Tempo system
+    tempo_percentage: f64,     // Porcentaje de tráfico a Chronos system
     validation_rules: Vec<ValidationRule>,
     success_criteria: SuccessCriteria,
 }
@@ -257,17 +257,17 @@ impl DeterministicAPIGateway {
         
         // Add deterministic headers
         let mut final_response = final_response;
-        final_response.headers.insert("X-Tempo-Deterministic".to_string(), "true".to_string());
-        final_response.headers.insert("X-Tempo-Timing-Cycles".to_string(), (rdtsc() - start_cycles).to_string());
-        final_response.headers.insert("X-Tempo-Timestamp".to_string(), start_time.to_string());
+        final_response.headers.insert("X-Chronos-Deterministic".to_string(), "true".to_string());
+        final_response.headers.insert("X-Chronos-Timing-Cycles".to_string(), (rdtsc() - start_cycles).to_string());
+        final_response.headers.insert("X-Chronos-Timestamp".to_string(), start_time.to_string());
         
         Ok(final_response)
     }
     
     fn call_upstream_service(&self, service: &UpstreamService, request: &HttpRequest) -> Result<HttpResponse, UpstreamError> {
         match service.service_type {
-            ServiceType::TempoService => {
-                // Direct call to Tempo service (deterministic)
+            ServiceType::ChronosService => {
+                // Direct call to Chronos service (deterministic)
                 self.call_tempo_service(service, request)
             },
             ServiceType::LegacyService => {
@@ -369,18 +369,18 @@ struct DatabaseIntegrationBridge {
 }
 
 struct QueryTranslator {
-    tempo_to_sql: TempoToSQLTranslator,
-    sql_to_tempo: SQLToTempoTranslator,
+    tempo_to_sql: ChronosToSQLTranslator,
+    sql_to_tempo: SQLToChronosTranslator,
     optimization_rules: Vec<OptimizationRule>,
 }
 
 impl QueryTranslator {
-    fn translate_tempo_query_to_sql(&self, tempo_query: &TempoQuery) -> Result<SQLQuery, TranslationError> {
-        // Convert Tempo deterministic query to SQL
+    fn translate_tempo_query_to_sql(&self, tempo_query: &ChronosQuery) -> Result<SQLQuery, TranslationError> {
+        // Convert Chronos deterministic query to SQL
         let mut sql_query = SQLQuery::new();
         
         match tempo_query {
-            TempoQuery::Select { fields, from_table, where_clause, order_by } => {
+            ChronosQuery::Select { fields, from_table, where_clause, order_by } => {
                 sql_query.select_fields(fields);
                 sql_query.from_table(from_table);
                 
@@ -399,7 +399,7 @@ impl QueryTranslator {
                 }
             },
             
-            TempoQuery::Insert { table, values } => {
+            ChronosQuery::Insert { table, values } => {
                 sql_query.insert_into(table);
                 
                 // Ensure deterministic insertion order
@@ -407,7 +407,7 @@ impl QueryTranslator {
                 sql_query.values(sorted_values);
             },
             
-            TempoQuery::Update { table, set_clause, where_clause } => {
+            ChronosQuery::Update { table, set_clause, where_clause } => {
                 sql_query.update_table(table);
                 sql_query.set_clause(set_clause);
                 
@@ -426,7 +426,7 @@ impl QueryTranslator {
         Ok(sql_query)
     }
     
-    fn execute_deterministic_query(&mut self, database_id: DatabaseId, tempo_query: &TempoQuery) -> Result<QueryResult, DatabaseError> {
+    fn execute_deterministic_query(&mut self, database_id: DatabaseId, tempo_query: &ChronosQuery) -> Result<QueryResult, DatabaseError> {
         // Translate query
         let sql_query = self.translate_tempo_query_to_sql(tempo_query)?;
         
@@ -721,12 +721,12 @@ impl MigrationAssistant {
         Ok(migration_plan)
     }
     
-    fn transform_legacy_code(&mut self, file_path: &Path, target_patterns: &[TransformationPattern]) -> Result<TempoCode, TransformationError> {
+    fn transform_legacy_code(&mut self, file_path: &Path, target_patterns: &[TransformationPattern]) -> Result<ChronosCode, TransformationError> {
         // Parse legacy code
         let legacy_ast = self.code_analyzer.parse_file(file_path)?;
         
         // Apply transformation patterns
-        let mut tempo_ast = TempoAST::new();
+        let mut tempo_ast = ChronosAST::new();
         
         for pattern in target_patterns {
             let transformed_nodes = self.transformation_engine.apply_pattern(&legacy_ast, pattern)?;
@@ -736,7 +736,7 @@ impl MigrationAssistant {
         // Optimize generated code
         tempo_ast = self.optimization_engine.optimize_for_determinism(tempo_ast)?;
         
-        // Generate Tempo source code
+        // Generate Chronos source code
         let tempo_code = self.code_generator.generate_tempo_code(&tempo_ast)?;
         
         // Validate generated code
@@ -751,7 +751,7 @@ impl MigrationAssistant {
         // Phase 1: Core business logic migration
         plan.add_phase(MigrationPhase {
             name: "Core Logic Migration".to_string(),
-            description: "Migrate core business logic to Tempo".to_string(),
+            description: "Migrate core business logic to Chronos".to_string(),
             files_to_migrate: analysis.core_business_files,
             estimated_effort: complexity.core_logic_effort,
             dependencies: vec![],
@@ -813,6 +813,6 @@ Diseña una estrategia completa de migración para una aplicación monolítica l
 2. Genere plan de migración por fases
 3. Provea herramientas de transformación automática
 4. Mantenga compatibilidad durante la transición
-5. Valide equivalencia funcional entre legacy y Tempo
+5. Valide equivalencia funcional entre legacy y Chronos
 
 **Próxima lección**: Ecosistema y Herramientas

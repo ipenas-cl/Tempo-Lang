@@ -1,11 +1,11 @@
-# Tempo Project Summary
+# Chronos Project Summary
 
 **Author:** Ignacio Peña Sepúlveda  
 **Date:** June 25, 2025
 
 ## 🎯 Project Overview
 
-Tempo is a revolutionary deterministic programming language and operating system designed to democratize reliable computing. It guarantees that the same input always produces the same output in the same time, making it ideal for:
+Chronos is a revolutionary deterministic programming language and operating system designed to democratize reliable computing. It guarantees that the same input always produces the same output in the same time, making it ideal for:
 
 - Small businesses competing with tech giants
 - Retail traders competing with HFT firms
@@ -16,7 +16,7 @@ Tempo is a revolutionary deterministic programming language and operating system
 
 ### Code Volume
 - **Total Files:** 50+ major implementation files
-- **Lines of Code:** ~25,000+ lines of Tempo code
+- **Lines of Code:** ~25,000+ lines of Chronos code
 - **Documentation:** ~10,000+ lines
 - **Examples:** 20+ working examples
 
@@ -24,7 +24,7 @@ Tempo is a revolutionary deterministic programming language and operating system
 
 #### 1. **Compiler Bootstrap (3 Stages)**
 - ✅ Stage 0: Assembly bootstrap (500 lines)
-- ✅ Stage 1: Minimal Tempo compiler (2,000+ lines)
+- ✅ Stage 1: Minimal Chronos compiler (2,000+ lines)
 - ✅ Stage 2: Full production compiler (5,000+ lines)
 
 #### 2. **Language Features**
@@ -59,7 +59,7 @@ Tempo is a revolutionary deterministic programming language and operating system
 - ✅ Development tools
 
 #### 6. **Educational Materials**
-- ✅ Tempo Bible (complete language spec)
+- ✅ Chronos Bible (complete language spec)
 - ✅ 27-lesson compiler course
 - ✅ Extensive examples
 - ✅ Architecture documentation
@@ -86,7 +86,7 @@ fn process_data(data: &[u8]) -> Result<Output, Error> {
 ```
 
 ### 4. **Self-Hosting Compiler**
-- Written in Tempo itself
+- Written in Chronos itself
 - Proves language completeness
 - Three-stage bootstrap from assembly
 
@@ -94,7 +94,7 @@ fn process_data(data: &[u8]) -> Result<Output, Error> {
 - x86_64 (Linux, Windows)
 - ARM64 (Linux, embedded)
 - RISC-V 64-bit
-- TempoCore (custom deterministic CPU)
+- ChronosCore (custom deterministic CPU)
 
 ## 📈 Performance Benchmarks
 
@@ -166,7 +166,7 @@ The project serves as a complete educational platform covering:
 - [ ] More example applications
 
 ### Long-term Vision
-- [ ] TempoCore CPU fabrication
+- [ ] ChronosCore CPU fabrication
 - [ ] Certified medical device framework
 - [ ] Financial trading platform
 - [ ] Educational curriculum adoption

@@ -1,4 +1,4 @@
-# Tempo: La Armonía Perfecta de la Computación
+# Chronos: La Armonía Perfecta de la Computación
 
 ## 🎵 El Acorde Perfecto de Do Mayor
 
@@ -26,11 +26,11 @@ G (Sol) = 3:2 (quinta justa)
 
 Estas proporciones crean la máxima consonancia - las ondas sonoras se alinean periódicamente creando estabilidad y predictibilidad.
 
-### La Analogía con Tempo
+### La Analogía con Chronos
 
 ```tempo
 // En música: C + E + G = Armonía Perfecta
-// En Tempo: Security + Stability + Performance = Determinismo Perfecto
+// En Chronos: Security + Stability + Performance = Determinismo Perfecto
 
 fn perfect_harmony() {
     let security    = fundamental_frequency();  // Base sólida (C)
@@ -42,7 +42,7 @@ fn perfect_harmony() {
 }
 ```
 
-## 🎹 Otros Acordes en Programación vs Tempo
+## 🎹 Otros Acordes en Programación vs Chronos
 
 ### Lenguajes Tradicionales: Acordes Disonantes
 
@@ -55,10 +55,10 @@ Otros lenguajes forman acordes disonantes:
 Result: Impredecible, no determinístico
 ```
 
-### Tempo: Acorde Perfecto
+### Chronos: Acorde Perfecto
 
 ```
-Tempo forma un acorde perfecto:
+Chronos forma un acorde perfecto:
 ╔═════╦═════╦═════╗
 ║ 🛡️  ║ ⚖️  ║ ⚡  ║
 ║  C  ║  E  ║  G  ║  → Acorde mayor (estable)
@@ -66,7 +66,7 @@ Tempo forma un acorde perfecto:
 Result: Determinístico, predecible, armonioso
 ```
 
-## 🎵 La Progresión Armónica de Tempo
+## 🎵 La Progresión Armónica de Chronos
 
 ### I. Tónica (Inicio)
 ```tempo
@@ -103,7 +103,7 @@ fn execute() {
 
 ## 🎼 Intervalos y Relaciones
 
-### Intervalos Consonantes en Tempo
+### Intervalos Consonantes en Chronos
 
 ```
 Security → Stability  = Tercera Mayor (4 semitonos)
@@ -120,7 +120,7 @@ Security → Performance = Quinta Justa (7 semitonos)
 
 ```tempo
 // Las tres notas resuenan juntas
-struct TempoResonance {
+struct ChronosResonance {
     // Cuando Security vibra, Stability y Performance resuenan
     security_frequency: 262_Hz,    // C4
     stability_frequency: 330_Hz,   // E4 (ratio 5:4 con C)
@@ -134,7 +134,7 @@ struct TempoResonance {
 
 ## 🎹 Acordes Extendidos para Casos Especiales
 
-### Tempo7 - Para Sistemas Complejos
+### Chronos7 - Para Sistemas Complejos
 ```
 ╔═════╦═════╦═════╦═════╗
 ║ 🛡️  ║ ⚖️  ║ ⚡  ║ 🔍  ║
@@ -142,7 +142,7 @@ struct TempoResonance {
 ╚═════╩═════╩═════╩═════╝
 ```
 
-### Tempo9 - Para Sistemas Críticos
+### Chronos9 - Para Sistemas Críticos
 ```
 ╔═════╦═════╦═════╦═════╦═════╗
 ║ 🛡️  ║ ⚖️  ║ ⚡  ║ 🔍  ║ 🏥  ║
@@ -153,7 +153,7 @@ struct TempoResonance {
 ## 🎵 El Ritmo del Determinismo
 
 ```
-4/4 Time Signature - El Compás de Tempo
+4/4 Time Signature - El Compás de Chronos
 
 ║: 🛡️ - ⚖️ - 🛡️ - ⚖️ :║  (Seguridad y Estabilidad)
 ║: ⚡ - - - ⚡ - - - :║     (Performance en los tiempos fuertes)
@@ -163,7 +163,7 @@ struct TempoResonance {
 ## 🎼 La Sinfonía Completa
 
 ```tempo
-symphony TempoDeterministicSymphony {
+symphony ChronosDeterministicSymphony {
     movement I: "Allegro Sicuro" {
         // Movimiento rápido pero seguro
         theme: security_first();
@@ -189,7 +189,7 @@ symphony TempoDeterministicSymphony {
 
 ## 🎵 Conclusión: La Música del Código Perfecto
 
-En Tempo, no escribimos código - componemos sinfonías determinísticas donde cada nota tiene su lugar, cada acorde su propósito, y cada ejecución su tempo garantizado.
+En Chronos, no escribimos código - componemos sinfonías determinísticas donde cada nota tiene su lugar, cada acorde su propósito, y cada ejecución su tempo garantizado.
 
 ```
 ╔═════╦═════╦═════╗
@@ -201,7 +201,7 @@ En Tempo, no escribimos código - componemos sinfonías determinísticas donde c
 ╚═════════════════╝
 ```
 
-**"En Tempo, cada programa es una composición musical perfecta,**  
+**"En Chronos, cada programa es una composición musical perfecta,**  
 **donde la armonía surge de la perfecta sincronización**  
 **de seguridad, estabilidad y performance."**
 

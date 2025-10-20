@@ -1,6 +1,6 @@
-# Tempo Showcase Examples
+# Chronos Showcase Examples
 
-These examples demonstrate Tempo's capabilities for high-performance systems programming.
+These examples demonstrate Chronos's capabilities for high-performance systems programming.
 
 ## Performance Benchmarks
 
@@ -36,7 +36,7 @@ bin/tempo examples/showcase/benchmarks/nginx-destroyer.tempo
 
 1. **Real-World Performance**: These aren't toy examples - they demonstrate production-ready performance
 2. **Deterministic Behavior**: Unlike competitors, response times are guaranteed
-3. **Zero Dependencies**: No external libraries needed - everything built with Tempo
+3. **Zero Dependencies**: No external libraries needed - everything built with Chronos
 4. **Memory Safety**: Achieve C-level performance with memory safety guarantees
 
 ## Migration Guides
@@ -59,4 +59,4 @@ If you're coming from:
 - Load balancing
 - Static file serving
 
-Both examples showcase Tempo's ability to build systems software that would traditionally require C or C++, but with guaranteed safety and deterministic performance.
+Both examples showcase Chronos's ability to build systems software that would traditionally require C or C++, but with guaranteed safety and deterministic performance.

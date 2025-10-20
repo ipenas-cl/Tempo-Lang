@@ -15,14 +15,14 @@
 
 ---
 
-# Tempo: Zero Imports, Zero Dependencies, 100% Offline
+# Chronos: Zero Imports, Zero Dependencies, 100% Offline
 
 ## Quick Start
 
 ```tempo
 // No imports needed - just write code!
 func main() {
-    println("Hello from Tempo!")
+    println("Hello from Chronos!")
     
     // Everything is available immediately:
     let server = listen_tcp("0.0.0.0:8080").unwrap()
@@ -35,7 +35,7 @@ func main() {
 
 ## The Revolutionary Approach
 
-Tempo eliminates the concept of imports entirely. Every standard library function is available in every file through the compiler's built-in prelude. This means:
+Chronos eliminates the concept of imports entirely. Every standard library function is available in every file through the compiler's built-in prelude. This means:
 
 - ✅ **Write code anywhere** - No internet needed
 - ✅ **Zero configuration** - No package.json, Cargo.toml, or go.mod
@@ -47,7 +47,7 @@ Tempo eliminates the concept of imports entirely. Every standard library functio
 
 ### 1. The Prelude System
 
-Every Tempo program automatically includes `prelude.tempo`:
+Every Chronos program automatically includes `prelude.tempo`:
 
 ```tempo
 // Automatically available - no imports needed:
@@ -120,7 +120,7 @@ Result: 48KB binary instead of 2.5MB!
 
 ## Comparison
 
-| Feature | Traditional Languages | Tempo |
+| Feature | Traditional Languages | Chronos |
 |---------|---------------------|--------|
 | Write "Hello World" | Need to know imports | Just `println("Hello World!")` |
 | Use networking | `import net` or `use std::net` | Just call `listen_tcp()` |
@@ -131,7 +131,7 @@ Result: 48KB binary instead of 2.5MB!
 
 ## Philosophy
 
-> "In 2030, will npm still exist? Will crates.io be online? Will your dependencies resolve? With Tempo, these questions don't matter. Your code will compile and run exactly the same way, forever."
+> "In 2030, will npm still exist? Will crates.io be online? Will your dependencies resolve? With Chronos, these questions don't matter. Your code will compile and run exactly the same way, forever."
 
 ## Use Cases
 
@@ -171,12 +171,12 @@ func main() {
 
 ## Getting Started
 
-1. **Install Tempo** (single binary, no dependencies)
+1. **Install Chronos** (single binary, no dependencies)
    ```bash
-   # Download from: https://github.com/ipenas-cl/Tempo-Lang/releases
+   # Download from: https://github.com/ipenas-cl/Chronos-Lang/releases
    # Or build from source:
-   git clone https://github.com/ipenas-cl/Tempo-Lang
-   cd Tempo-Lang && ./build.sh
+   git clone https://github.com/ipenas-cl/Chronos-Lang
+   cd Chronos-Lang && ./build.sh
    ```
 
 2. **Write code** (no project setup needed)
@@ -233,14 +233,14 @@ A: Use modules within your project. The no-import philosophy applies to the stan
 A: The prelude is just declarations. Tree-shaking ensures only used code ends up in your binary.
 
 **Q: What if I need a function that's not in the prelude?**
-A: Write it! Tempo encourages self-contained, maintainable code.
+A: Write it! Chronos encourages self-contained, maintainable code.
 
 ## Join the Revolution
 
 Tired of dependency hell? Sick of broken builds? Want to write code that works forever?
 
-**Welcome to Tempo - where your code depends on nothing and runs everywhere.**
+**Welcome to Chronos - where your code depends on nothing and runs everywhere.**
 
 ---
 
-*"The best dependency is no dependency."* - The Tempo Philosophy
+*"The best dependency is no dependency."* - The Chronos Philosophy

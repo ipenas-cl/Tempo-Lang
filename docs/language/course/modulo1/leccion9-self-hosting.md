@@ -26,14 +26,14 @@ Un compilador self-hosted es aquel que está escrito en el mismo lenguaje que co
 
 ### El Problema del Huevo y la Gallina
 
-¿Cómo compilamos un compilador de Tempo escrito en Tempo si no tenemos un compilador de Tempo?
+¿Cómo compilamos un compilador de Chronos escrito en Chronos si no tenemos un compilador de Chronos?
 
 **Solución: Bootstrapping en etapas**
 
 ```
 1. Stage 0: Compilador mínimo en Assembly
-2. Stage 1: Compilador simple en Tempo, compilado por Stage 0
-3. Stage 2: Compilador completo en Tempo, compilado por Stage 1
+2. Stage 1: Compilador simple en Chronos, compilado por Stage 0
+3. Stage 2: Compilador completo en Chronos, compilado por Stage 1
 4. Stage N: El compilador se compila a sí mismo
 ```
 
@@ -49,7 +49,7 @@ Un compilador self-hosted es aquel que está escrito en el mismo lenguaje que co
 **Prueba de punto fijo**: Si compilamos el compilador consigo mismo repetidamente, debe producir exactamente el mismo binario.
 
 ```
-Tempo Compiler (fuente) → Compiler A → Compiler B → Compiler C
+Chronos Compiler (fuente) → Compiler A → Compiler B → Compiler C
                            Stage 0      Stage 1      Stage 2
 
 Si B == C, entonces el compilador es estable
@@ -61,7 +61,7 @@ Si B == C, entonces el compilador es estable
 
 ```asm
 ; stage0_compiler.asm
-; Compilador ultra-mínimo que puede compilar un subconjunto de Tempo
+; Compilador ultra-mínimo que puede compilar un subconjunto de Chronos
 
 section .data
     ; Palabras clave mínimas
@@ -101,7 +101,7 @@ _start:
     xor ebx, ebx
     int 0x80
 
-; compile_minimal: Compilador mínimo para subset de Tempo
+; compile_minimal: Compilador mínimo para subset de Chronos
 compile_minimal:
     push ebp
     mov ebp, esp
@@ -254,11 +254,11 @@ emit_return_value:
     ret 4
 ```
 
-### Stage 1: Compilador en Tempo (Mínimo)
+### Stage 1: Compilador en Chronos (Mínimo)
 
 ```tempo
 // stage1_compiler.tempo
-// Compilador escrito en subset mínimo de Tempo
+// Compilador escrito en subset mínimo de Chronos
 // Compilado por stage0
 
 fn main() {
@@ -383,7 +383,7 @@ fn generate_function(output, func) {
 }
 ```
 
-### Stage 2: Compilador Completo en Tempo
+### Stage 2: Compilador Completo en Chronos
 
 ```tempo
 // stage2_compiler.tempo
@@ -647,7 +647,7 @@ fn main() -> i32 {
 #!/bin/bash
 # bootstrap.sh - Script para bootstrapping del compilador
 
-echo "=== Tempo Compiler Bootstrapping ==="
+echo "=== Chronos Compiler Bootstrapping ==="
 
 # Paso 1: Ensamblar el compilador stage0
 echo "[1/5] Assembling stage0 compiler..."
@@ -683,7 +683,7 @@ echo "Verifying fixed point..."
 if diff stage2_compiler_self1 stage2_compiler_self2 > /dev/null; then
     echo "SUCCESS: Fixed point reached! The compiler is self-hosting."
     cp stage2_compiler_self2 tempo
-    echo "The Tempo compiler is now available as './tempo'"
+    echo "The Chronos compiler is now available as './tempo'"
 else
     echo "ERROR: Fixed point not reached. The compiler is not stable."
     exit 1
@@ -861,7 +861,7 @@ Añade instrumentación al compilador para medir:
 - Número de nodos AST creados
 
 ### Ejercicio 5: Meta-Circular Evaluator
-Implementa un intérprete de Tempo escrito en Tempo que pueda ejecutar el compilador. Esto permite debugging y desarrollo sin recompilar.
+Implementa un intérprete de Chronos escrito en Chronos que pueda ejecutar el compilador. Esto permite debugging y desarrollo sin recompilar.
 
 ## Proyecto Integrador: Compilador Production-Ready
 
@@ -928,7 +928,7 @@ fn check_compiler_compatibility(required: CompilerVersion) -> bool {
 
 ¡Felicitaciones! Has logrado el Santo Grial del desarrollo de compiladores: un compilador self-hosted. Este logro demuestra:
 
-1. **Completitud**: Tempo es lo suficientemente expresivo para implementar su propio compilador
+1. **Completitud**: Chronos es lo suficientemente expresivo para implementar su propio compilador
 2. **Corrección**: El compilador genera código correcto consistentemente
 3. **Eficiencia**: El compilador puede compilarse a sí mismo en tiempo razonable
 4. **Madurez**: El lenguaje está listo para aplicaciones serias

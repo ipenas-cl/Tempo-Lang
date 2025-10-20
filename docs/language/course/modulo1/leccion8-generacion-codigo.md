@@ -22,7 +22,7 @@ Date: June 25, 2025
 
 ### El Proceso de Generación de Código
 
-La generación de código es la fase final de un compilador donde transformamos la representación intermedia (AST) en código máquina ejecutable. Para Tempo, generamos directamente assembly x86 optimizado.
+La generación de código es la fase final de un compilador donde transformamos la representación intermedia (AST) en código máquina ejecutable. Para Chronos, generamos directamente assembly x86 optimizado.
 
 ### Estrategias de Generación
 
@@ -64,7 +64,7 @@ Alto
 | Variables     |
 | locales       |
 +---------------+
-| Temporales    | <- ESP
+| Chronosrales    | <- ESP
 +---------------+
 Bajo
 ```

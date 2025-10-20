@@ -13,14 +13,14 @@ Date: June 25, 2025
 # Lección 22: Sistemas Embebidos y IoT
 
 ## Objetivos
-- Adaptar Tempo para sistemas embebidos
+- Adaptar Chronos para sistemas embebidos
 - Implementar real-time constraints estrictos
 - Diseñar IoT determinístico y seguro
 - Crear optimizaciones para recursos limitados
 
-## Teoría: Tempo Embebido
+## Teoría: Chronos Embebido
 
-Para sistemas embebidos, Tempo debe optimizar:
+Para sistemas embebidos, Chronos debe optimizar:
 
 1. **Footprint de memoria** extremadamente pequeño
 2. **Consumo de energía** determinístico

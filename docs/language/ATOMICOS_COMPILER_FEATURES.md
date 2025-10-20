@@ -1,4 +1,4 @@
-# Características del Compilador Tempo para AtomicOS
+# Características del Compilador Chronos para AtomicOS
 
 ## 🏗️ FUNDAMENTOS BÁSICOS
 

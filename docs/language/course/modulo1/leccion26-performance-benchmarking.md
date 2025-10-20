@@ -20,7 +20,7 @@ Date: June 25, 2025
 
 ## Teoría: Benchmarking Determinístico
 
-En Tempo, el benchmarking debe ser completamente reproducible:
+En Chronos, el benchmarking debe ser completamente reproducible:
 
 1. **Mismos resultados** en múltiples ejecuciones
 2. **Métricas determinísticas** sin varianza estadística
@@ -189,7 +189,7 @@ impl DeterministicBenchmark {
             mean_cpu_cycles: self.calculate_mean_cpu_cycles(results),
             memory_statistics: self.calculate_memory_statistics(results),
             cache_statistics: self.calculate_cache_statistics(results),
-            determinism_score: 1.0, // Perfect determinism in Tempo
+            determinism_score: 1.0, // Perfect determinism in Chronos
             performance_classification: self.classify_performance(results)?,
         };
         
@@ -276,7 +276,7 @@ benchmark! {
 ## Comparative Benchmarking
 
 ```tempo
-// Framework para comparar Tempo con otros lenguajes
+// Framework para comparar Chronos con otros lenguajes
 struct ComparativeBenchmarkSuite {
     benchmarks: Vec<LanguageComparison>,
     runtime_environments: HashMap<Language, RuntimeEnvironment>,
@@ -390,13 +390,13 @@ impl ComparativeBenchmarkSuite {
     }
     
     fn analyze_comparative_results(&self, results: &HashMap<Language, NormalizedResult>) -> Result<ComparativeAnalysis, ComparisonError> {
-        let tempo_result = results.get(&Language::Tempo)
-            .ok_or(ComparisonError::TempoResultMissing)?;
+        let tempo_result = results.get(&Language::Chronos)
+            .ok_or(ComparisonError::ChronosResultMissing)?;
         
         let mut language_comparisons = HashMap::new();
         
         for (language, result) in results {
-            if *language == Language::Tempo {
+            if *language == Language::Chronos {
                 continue;
             }
             
@@ -702,7 +702,7 @@ struct WebServerBenchmark {
 
 impl WebServerBenchmark {
     fn run_web_server_benchmark(&mut self) -> Result<WebServerBenchmarkReport, BenchmarkError> {
-        // Start Tempo web server
+        // Start Chronos web server
         let server = self.start_tempo_web_server()?;
         
         let mut scenario_results = Vec::new();
@@ -825,7 +825,7 @@ impl CompilerBenchmark {
             error_messages: compilation_output.errors,
             warnings: compilation_output.warnings,
             
-            // Tempo-specific metrics
+            // Chronos-specific metrics
             wcet_analysis_time: compilation_output.wcet_analysis_time,
             determinism_verification_time: compilation_output.determinism_verification_time,
             optimization_passes_applied: compilation_output.optimization_passes,

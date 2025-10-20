@@ -13,7 +13,7 @@ Date: June 25, 2025
 # Lección 27: Casos de Uso Avanzados y Proyectos Finales
 
 ## Objetivos
-- Implementar proyectos complejos en Tempo
+- Implementar proyectos complejos en Chronos
 - Demostrar capacidades avanzadas del lenguaje
 - Crear aplicaciones del mundo real
 - Integrar todos los conceptos aprendidos
@@ -492,7 +492,7 @@ impl DSLCompiler {
     }
     
     fn generate_tempo_code(&self, ast: &DSLNode) -> Result<String, DSLError> {
-        let mut code_builder = TempoCodeBuilder::new();
+        let mut code_builder = ChronosCodeBuilder::new();
         
         match ast {
             DSLNode::Module { name, items } => {
@@ -1023,6 +1023,6 @@ Tu proyecto será evaluado en:
 - **Documentation**: ¿Está bien documentado y explicado?
 - **Architecture**: ¿El diseño es sólido y escalable?
 
-¡Felicitaciones por completar el curso completo de compiladores Tempo! 🎉
+¡Felicitaciones por completar el curso completo de compiladores Chronos! 🎉
 
 Ahora tienes todas las herramientas para crear el futuro del software determinístico.

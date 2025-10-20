@@ -66,7 +66,7 @@ Un tokenizer eficiente necesita:
 ### 1. Estructura de Datos y Setup
 
 ```assembly
-; tokenizer.s - Tokenizer para Tempo en assembly
+; tokenizer.s - Tokenizer para Chronos en assembly
 section .data
     ; Tabla de palabras clave
     keywords:
@@ -866,7 +866,7 @@ Optimiza el tokenizer:
 ## 🎯 Para la próxima clase
 
 1. Implementa el tokenizer completo
-2. Pruébalo con varios archivos Tempo
+2. Pruébalo con varios archivos Chronos
 3. Piensa: ¿Cómo construirías el parser encima?
 
 ## 💡 Dato curioso
@@ -875,6 +875,6 @@ El primer tokenizer fue parte del compilador FORTRAN I (1957). Usaba una técnic
 
 ---
 
-**Resumen**: Hemos construido un tokenizer completo en assembly x86-64. Este tokenizer es la base de nuestro compilador bootstrap, capaz de reconocer todos los tokens básicos de Tempo con manejo de errores y ubicación precisa.
+**Resumen**: Hemos construido un tokenizer completo en assembly x86-64. Este tokenizer es la base de nuestro compilador bootstrap, capaz de reconocer todos los tokens básicos de Chronos con manejo de errores y ubicación precisa.
 
 [← Lección 5: Assembly x86-64](leccion5-assembly.md) | [Módulo 2 →](../modulo2/README.md)

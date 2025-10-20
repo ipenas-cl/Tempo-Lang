@@ -1,10 +1,10 @@
-# Tempo Project Structure
+# Chronos Project Structure
 
 ## Root Directory Structure
 
 ```
 tempo-lang/
-├── 📁 compiler/           # Tempo compiler implementation
+├── 📁 compiler/           # Chronos compiler implementation
 │   ├── bootstrap/         # Bootstrap assembly code
 │   ├── stages/           # Multi-stage compilation
 │   └── platforms/        # Platform-specific code
@@ -13,7 +13,7 @@ tempo-lang/
 │   ├── drivers/          # Hardware drivers
 │   ├── fs/              # File system
 │   └── net/             # Network stack
-├── 📁 stdlib/            # Tempo standard library
+├── 📁 stdlib/            # Chronos standard library
 │   ├── core/            # Core data types
 │   ├── collections/     # Data structures
 │   └── system/          # System interfaces

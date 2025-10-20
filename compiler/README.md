@@ -1,6 +1,6 @@
-# Tempo Compiler
+# Chronos Compiler
 
-The Tempo compiler implementation with zero C dependencies.
+The Chronos compiler implementation with zero C dependencies.
 
 ## Structure
 

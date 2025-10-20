@@ -23,7 +23,7 @@
 ## MANIFIESTO
 
 ```tempo
-manifest TempoRevolution {
+manifest ChronosRevolution {
     "El software no debería ser impredecible"
     "La seguridad no es negociable"  
     "La estabilidad es un derecho"
@@ -85,7 +85,7 @@ Un lenguaje que es:
 ### Stack de Tres Capas
 
 ```tempo
-architecture TempoStack {
+architecture ChronosStack {
     // Capa 1: Compatibilidad (2-3x más rápido que C++)
     layer compatibility {
         targets: [Windows, Linux, macOS, BSD]
@@ -100,9 +100,9 @@ architecture TempoStack {
         via: direct_hardware_access
     }
     
-    // Capa 3: Tempo Silicon (límites físicos)
+    // Capa 3: Chronos Silicon (límites físicos)
     layer silicon {
-        chip: TempoCore ASIC
+        chip: ChronosCore ASIC
         performance: "Cercano a límites físicos"
         via: hardware_determinism
     }
@@ -119,7 +119,7 @@ architecture TempoStack {
 
 ## 3. SISTEMA DE TIPOS REVOLUCIONARIO {#tipos}
 
-### Tipos Temporales
+### Tipos Chronosrales
 ```tempo
 // El tiempo es un tipo, no un comentario
 function process(data: Buffer) -> Result within 100µs
@@ -377,7 +377,7 @@ app GrowingBusiness {
 
 ### Fase 0: Bootstrap (1 día con Claudes)
 - ✓ Compilador básico en assembly
-- ✓ Self-hosting en Tempo
+- ✓ Self-hosting en Chronos
 - ✓ Toolchain completa
 
 ### Fase 1: MVP (3 meses)
@@ -400,8 +400,8 @@ app GrowingBusiness {
 
 ### Fase 4: Hardware (2 años)
 - [ ] FPGA implementation
-- [ ] TempoCore ASIC
-- [ ] Smartphones Tempo
+- [ ] ChronosCore ASIC
+- [ ] Smartphones Chronos
 
 ---
 
@@ -441,7 +441,7 @@ concurrency {
 
 ## CONCLUSIÓN
 
-Tempo no es solo un lenguaje de programación. Es una revolución que:
+Chronos no es solo un lenguaje de programación. Es una revolución que:
 
 1. **Democratiza** la programación de sistemas
 2. **Garantiza** determinismo, seguridad y estabilidad
@@ -456,7 +456,7 @@ Tempo no es solo un lenguaje de programación. Es una revolución que:
 ## APÉNDICES
 
 ### A. Comparación con Lenguajes Existentes
-| Feature | C | Rust | Ada | Tempo |
+| Feature | C | Rust | Ada | Chronos |
 |---------|---|------|-----|-------|
 | Determinismo | No | No | Parcial | **Sí** |
 | WCET integrado | No | No | No | **Sí** |
@@ -478,4 +478,4 @@ Tempo no es solo un lenguaje de programación. Es una revolución que:
 
 ---
 
-*"El futuro del software es determinístico, seguro, estable y rápido. El futuro es Tempo."*
+*"El futuro del software es determinístico, seguro, estable y rápido. El futuro es Chronos."*

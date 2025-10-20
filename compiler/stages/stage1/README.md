@@ -15,13 +15,13 @@
 
 ---
 
-# Tempo Compiler Stage 1
+# Chronos Compiler Stage 1
 
-Compilador de Tempo escrito en Tempo mínimo (compilable por stage0).
+Compilador de Chronos escrito en Chronos mínimo (compilable por stage0).
 
 ## 🎯 Objetivo
 
-Stage1 es un compilador más completo que stage0, pero todavía simple. Está escrito en un subset de Tempo que nuestro bootstrap en assembly puede compilar.
+Stage1 es un compilador más completo que stage0, pero todavía simple. Está escrito en un subset de Chronos que nuestro bootstrap en assembly puede compilar.
 
 ## 📚 Características Nuevas vs Stage0
 
@@ -145,7 +145,7 @@ Stage 2 será el compilador completo con:
 | Feature | Stage 0 | Stage 1 | Stage 2 |
 |---------|---------|---------|---------|
 | Líneas de código | 500 | 2000 | 10000+ |
-| Lenguaje | Assembly | Tempo básico | Tempo completo |
+| Lenguaje | Assembly | Chronos básico | Chronos completo |
 | Features | print() | Variables, if, while | Todo |
 | Optimizaciones | Ninguna | Básicas | Avanzadas |
 | Error handling | Crash | Línea/columna | Full diagnostics |

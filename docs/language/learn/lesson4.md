@@ -69,7 +69,7 @@ fn main() -> i32 {
 
 ## Working with Strings
 
-Tempo has many built-in string functions:
+Chronos has many built-in string functions:
 
 ```tempo
 fn main() -> i32 {

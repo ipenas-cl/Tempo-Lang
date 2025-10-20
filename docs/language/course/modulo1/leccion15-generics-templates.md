@@ -67,7 +67,7 @@ fn hash<T: Hash + Eq>(value: &T) -> u64 {
 ### Representación de Tipos Genéricos
 
 ```tempo
-// generics.tempo - Sistema de generics para Tempo
+// generics.tempo - Sistema de generics para Chronos
 
 struct GenericType {
     base_type: Type,
@@ -958,4 +958,4 @@ Los generics son fundamentales para escribir código reusable y type-safe. La im
 3. **Seguridad**: Type checking fuerte sin overhead
 4. **Optimización**: Especialización para casos comunes
 
-El sistema de generics de Tempo combina las mejores ideas de múltiples lenguajes, proporcionando abstracciones poderosas sin sacrificar performance. Con estas técnicas, los programadores pueden escribir código genérico que es tan eficiente como el código especializado manualmente.
+El sistema de generics de Chronos combina las mejores ideas de múltiples lenguajes, proporcionando abstracciones poderosas sin sacrificar performance. Con estas técnicas, los programadores pueden escribir código genérico que es tan eficiente como el código especializado manualmente.

@@ -13,7 +13,7 @@ Date: June 25, 2025
 # Lección 10: Sistema de Tipos - Type Checking and Inference Basics
 
 ## Objetivos de la Lección
-- Implementar un sistema de tipos estático para Tempo
+- Implementar un sistema de tipos estático para Chronos
 - Añadir type checking al compilador self-hosted
 - Implementar inferencia de tipos básica
 - Garantizar seguridad de tipos sin overhead en runtime
@@ -29,7 +29,7 @@ Un sistema de tipos bien diseñado proporciona:
 3. **Optimización**: Permite optimizaciones agresivas
 4. **Abstracción**: Facilita el razonamiento sobre programas
 
-### Tipos en Tempo
+### Tipos en Chronos
 
 ```tempo
 // Tipos primitivos
@@ -58,7 +58,7 @@ never                // Nunca retorna (panic, loop infinito)
 
 ### Inferencia de Tipos
 
-Tempo usa inferencia de tipos bidireccional:
+Chronos usa inferencia de tipos bidireccional:
 - **Síntesis**: Inferir el tipo de una expresión
 - **Verificación**: Verificar que una expresión tiene un tipo esperado
 
@@ -574,7 +574,7 @@ fn infer_generic_call(tc: *TypeChecker, func: *GenericType, args: **ASTNode) -> 
 ### Verificación de Seguridad de Memoria
 
 ```tempo
-// Análisis de préstamos simplificado para Tempo
+// Análisis de préstamos simplificado para Chronos
 
 enum BorrowKind {
     BORROW_SHARED,      // Lectura
@@ -885,4 +885,4 @@ Has construido un compilador completo desde cero:
 - **Lección 9**: Self-hosting
 - **Lección 10**: Sistema de tipos
 
-¡Felicitaciones! Ahora tienes las herramientas y conocimientos para crear lenguajes de programación eficientes y seguros. El compilador de Tempo que has construido es comparable a compiladores de producción, demostrando que es posible crear herramientas de alta calidad con diseño minimalista y enfoque en la eficiencia.
+¡Felicitaciones! Ahora tienes las herramientas y conocimientos para crear lenguajes de programación eficientes y seguros. El compilador de Chronos que has construido es comparable a compiladores de producción, demostrando que es posible crear herramientas de alta calidad con diseño minimalista y enfoque en la eficiencia.

@@ -1,10 +1,10 @@
-# Lesson 1: Your First Tempo Program
+# Lesson 1: Your First Chronos Program
 
-Welcome to programming with Tempo! In this lesson, you'll write and run your first program.
+Welcome to programming with Chronos! In this lesson, you'll write and run your first program.
 
 ## What You'll Learn
 
-- How to write a simple Tempo program
+- How to write a simple Chronos program
 - How to compile and run it
 - Basic syntax: functions and printing
 
@@ -14,7 +14,7 @@ Create a file called `hello.tempo`:
 
 ```tempo
 fn main() -> i32 {
-    print_line("Hello! Welcome to Tempo!");
+    print_line("Hello! Welcome to Chronos!");
     print_line("This is my first program.");
     return 0;
 }
@@ -30,7 +30,7 @@ Let's break it down line by line:
    - `-> i32` means it returns a number
    - `{` starts the function body
 
-2. `print_line("Hello! Welcome to Tempo!");` - This prints text to the screen
+2. `print_line("Hello! Welcome to Chronos!");` - This prints text to the screen
    - `print_line` is a built-in function
    - Text goes inside quotes `""`
 
@@ -51,7 +51,7 @@ bin/tempo hello.tempo
 
 You should see:
 ```
-Hello! Welcome to Tempo!
+Hello! Welcome to Chronos!
 This is my first program.
 ```
 
@@ -75,9 +75,9 @@ fn main() -> i32 {
 }
 ```
 
-## What Makes Tempo Special?
+## What Makes Chronos Special?
 
-Unlike other languages, Tempo:
+Unlike other languages, Chronos:
 - Doesn't need `import` statements - everything is ready to use
 - Guarantees your program will always behave the same way
 - Compiles to a small, fast binary

@@ -962,6 +962,6 @@ AtomicOS no es solo un OS, es una **sinfonía matemática** donde cada instrucci
 
 **Sin cualquiera de estas, el OS estará incompleto.**
 
-Tempo tiene **TODAS** estas características, ¡por eso AtomicOS puede existir! 🚀
+Chronos tiene **TODAS** estas características, ¡por eso AtomicOS puede existir! 🚀
 
 [T∞] Bounded Time, Infinite Reliability

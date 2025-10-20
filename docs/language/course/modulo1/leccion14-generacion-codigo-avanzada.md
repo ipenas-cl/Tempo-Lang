@@ -1209,4 +1209,4 @@ La generación de código avanzada es donde la teoría encuentra la práctica. L
 3. **Performance**: Explotar ILP y microarquitectura
 4. **Practicidad**: Balance entre compile time y code quality
 
-El backend de Tempo demuestra que es posible generar código competitivo con diseño limpio y modular.
+El backend de Chronos demuestra que es posible generar código competitivo con diseño limpio y modular.

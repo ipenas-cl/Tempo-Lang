@@ -16,7 +16,7 @@ Date: June 25, 2025
 
 - Dominar autómatas finitos deterministas (DFA) y no deterministas (NFA)
 - Escribir y optimizar expresiones regulares
-- Implementar un lexer real para Tempo
+- Implementar un lexer real para Chronos
 - Entender la relación entre regex, autómatas y análisis léxico
 
 ## 🧠 Teoría: Autómatas y Regex (20%)
@@ -158,10 +158,10 @@ function build_nfa(node: RegexNode) -> NFA {
 }
 ```
 
-### 3. Lexer Completo para Tempo
+### 3. Lexer Completo para Chronos
 
 ```tempo
-// Token types de Tempo
+// Token types de Chronos
 type TokenType = enum {
     // Palabras clave
     FUNCTION, LET, IF, ELSE, WHILE, FOR, RETURN, WITHIN,
@@ -604,6 +604,6 @@ Ken Thompson (creador de Unix) inventó el algoritmo de construcción de NFA des
 
 ---
 
-**Resumen**: Los autómatas finitos y las expresiones regulares son la base del análisis léxico. Un buen lexer es determinista, rápido y mantenible. Para Tempo, usamos un DFA optimizado que garantiza tiempo O(n) para tokenización.
+**Resumen**: Los autómatas finitos y las expresiones regulares son la base del análisis léxico. Un buen lexer es determinista, rápido y mantenible. Para Chronos, usamos un DFA optimizado que garantiza tiempo O(n) para tokenización.
 
 [← Lección 2](leccion2-teoria.md) | [Índice](../README.md) | [Lección 4: Parsing →](leccion4-parsing.md)

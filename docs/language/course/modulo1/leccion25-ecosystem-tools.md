@@ -13,14 +13,14 @@ Date: June 25, 2025
 # Lección 25: Ecosistema y Herramientas
 
 ## Objetivos
-- Diseñar herramientas de desarrollo para Tempo
+- Diseñar herramientas de desarrollo para Chronos
 - Crear IDE integration completa
 - Implementar package manager determinístico
 - Desarrollar toolchain completo
 
-## Teoría: Ecosistema Tempo
+## Teoría: Ecosistema Chronos
 
-Un ecosistema completo para Tempo debe incluir:
+Un ecosistema completo para Chronos debe incluir:
 
 1. **Development tools** integrados con garantías de determinismo
 2. **Package ecosystem** con verificación y reproducibilidad
@@ -30,8 +30,8 @@ Un ecosistema completo para Tempo debe incluir:
 ## IDE Integration (VSCode/IntelliJ)
 
 ```tempo
-// Language Server Protocol implementation para Tempo
-struct TempoLanguageServer {
+// Language Server Protocol implementation para Chronos
+struct ChronosLanguageServer {
     workspace: Workspace,
     analyzer: SemanticAnalyzer,
     formatter: CodeFormatter,
@@ -48,7 +48,7 @@ struct SemanticAnalyzer {
     dependency_resolver: DependencyResolver,
 }
 
-impl TempoLanguageServer {
+impl ChronosLanguageServer {
     fn handle_document_change(&mut self, uri: &Uri, text: &str) -> Result<Vec<Diagnostic>, LSPError> {
         // Parse document
         let ast = self.parse_document(text)?;
@@ -224,8 +224,8 @@ impl TempoLanguageServer {
     }
 }
 
-// Code formatter específico para Tempo
-struct TempoFormatter {
+// Code formatter específico para Chronos
+struct ChronosFormatter {
     config: FormatterConfig,
     style_analyzer: StyleAnalyzer,
 }
@@ -239,7 +239,7 @@ struct FormatterConfig {
     group_deterministic_functions: bool,
 }
 
-impl TempoFormatter {
+impl ChronosFormatter {
     fn format_document(&mut self, source: &str) -> Result<FormattedDocument, FormatError> {
         let ast = parse_tempo_source(source)?;
         
@@ -296,7 +296,7 @@ impl TempoFormatter {
 
 ```tempo
 // Package manager con reproducibilidad garantizada
-struct TempoPackageManager {
+struct ChronosPackageManager {
     registry: PackageRegistry,
     local_cache: LocalPackageCache,
     dependency_resolver: DeterministicDependencyResolver,
@@ -331,7 +331,7 @@ struct PackageMetadata {
     signatures: Vec<PackageSignature>,
 }
 
-impl TempoPackageManager {
+impl ChronosPackageManager {
     fn install_package(&mut self, package_spec: &PackageSpec) -> Result<InstallationResult, PackageError> {
         // 1. Resolve dependencies deterministically
         let resolution = self.dependency_resolver.resolve_dependencies(package_spec)?;
@@ -549,10 +549,10 @@ impl DeterministicDependencyResolver {
 
 ```tempo
 // Suite completa de herramientas para desarrolladores
-struct TempoDevTools {
+struct ChronosDevTools {
     profiler: DeterministicProfiler,
-    debugger: TempoDebugger,
-    linter: TempoLinter,
+    debugger: ChronosDebugger,
+    linter: ChronosLinter,
     analyzer: StaticAnalyzer,
     optimizer: CodeOptimizer,
     documentation_generator: DocGenerator,
@@ -652,13 +652,13 @@ impl DeterministicProfiler {
     }
 }
 
-// Linter especializado para Tempo
-struct TempoLinter {
+// Linter especializado para Chronos
+struct ChronosLinter {
     rules: Vec<LintRule>,
     rule_config: LintConfiguration,
 }
 
-impl TempoLinter {
+impl ChronosLinter {
     fn lint_file(&mut self, file_path: &Path) -> Result<LintResults, LintError> {
         let source_code = read_file(file_path)?;
         let ast = parse_tempo_source(&source_code)?;
@@ -741,14 +741,14 @@ impl TempoLinter {
 }
 
 // Documentation generator con análisis automático
-struct TempoDocGenerator {
+struct ChronosDocGenerator {
     template_engine: TemplateEngine,
     markdown_processor: MarkdownProcessor,
     diagram_generator: DiagramGenerator,
     example_extractor: ExampleExtractor,
 }
 
-impl TempoDocGenerator {
+impl ChronosDocGenerator {
     fn generate_documentation(&mut self, project_path: &Path) -> Result<Documentation, DocError> {
         // Analyze project structure
         let project_analysis = self.analyze_project(project_path)?;
@@ -815,10 +815,10 @@ impl TempoDocGenerator {
 ## Build System Integration
 
 ```tempo
-// Build system optimizado para Tempo
-struct TempoBuildSystem {
-    compiler: TempoCompiler,
-    linker: TempoLinker,
+// Build system optimizado para Chronos
+struct ChronosBuildSystem {
+    compiler: ChronosCompiler,
+    linker: ChronosLinker,
     dependency_manager: DependencyManager,
     cache_manager: BuildCacheManager,
     target_manager: TargetManager,
@@ -838,7 +838,7 @@ struct BuildConfiguration {
     normalize_paths: bool,
 }
 
-impl TempoBuildSystem {
+impl ChronosBuildSystem {
     fn build_project(&mut self, config: &BuildConfiguration) -> Result<BuildOutput, BuildError> {
         // Setup deterministic build environment
         if config.deterministic_build {
@@ -951,7 +951,7 @@ impl TempoBuildSystem {
 
 Desarrolla un plugin completo para VSCode que incluya:
 
-1. Syntax highlighting para Tempo
+1. Syntax highlighting para Chronos
 2. IntelliSense con análisis WCET
 3. Debugging integrado con visualización de determinismo
 4. Refactoring tools automáticas
@@ -959,7 +959,7 @@ Desarrolla un plugin completo para VSCode que incluya:
 
 ## Ejercicio Final
 
-Crea un toolchain completo para Tempo que incluya:
+Crea un toolchain completo para Chronos que incluya:
 
 1. Compiler driver con múltiples targets
 2. Package manager con registry distribuido

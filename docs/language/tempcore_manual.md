@@ -15,7 +15,7 @@
 
 ---
 
-# TempoCore Technical Reference Manual
+# ChronosCore Technical Reference Manual
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -30,13 +30,13 @@
 
 ## Introduction
 
-TempoCore is a deterministic processor architecture specifically designed for the Tempo programming language and AtomicOS. The primary design goal is to provide predictable, deterministic execution timing while maintaining reasonable performance for real-time and safety-critical applications.
+ChronosCore is a deterministic processor architecture specifically designed for the Chronos programming language and AtomicOS. The primary design goal is to provide predictable, deterministic execution timing while maintaining reasonable performance for real-time and safety-critical applications.
 
 ### Key Features
 - **Deterministic Execution**: Every instruction has a fixed, known cycle count
 - **No Speculation**: In-order pipeline with no branch prediction or speculative execution
 - **Scratchpad Memory**: Fast, deterministic memory access
-- **Custom Instructions**: Specialized operations for Tempo patterns
+- **Custom Instructions**: Specialized operations for Chronos patterns
 - **Timing Guarantees**: Hardware support for deadline monitoring and WCET enforcement
 
 ## Architecture Overview
@@ -57,7 +57,7 @@ TempoCore is a deterministic processor architecture specifically designed for th
   - WCET - Worst-Case Execution Time register
   - DEADLINE - Current deadline register
   - ATOMIC_CTX - Atomic context register
-  - TEMPO_FLAGS - Tempo-specific flags
+  - TEMPO_FLAGS - Chronos-specific flags
 
 ### Instruction Format
 All instructions are 32-bit fixed width:
@@ -118,7 +118,7 @@ OPCODE    RD      RS1     IMM14
 | CALL     | 0x36    | LR = PC + 4; PC = rs1 | Function call |
 | RET      | 0x37    | PC = LR | Return from function |
 
-### Tempo-Specific Instructions (1 cycle)
+### Chronos-Specific Instructions (1 cycle)
 | Mnemonic | Opcode | Description |
 |----------|---------|-------------|
 | ATOMIC_BEGIN | 0x40 | Begin atomic block |
@@ -130,7 +130,7 @@ OPCODE    RD      RS1     IMM14
 
 ## Pipeline Design
 
-TempoCore uses a classic 5-stage in-order pipeline:
+ChronosCore uses a classic 5-stage in-order pipeline:
 
 1. **IF (Instruction Fetch)**: Fetch instruction from memory (2 cycles)
 2. **ID (Instruction Decode)**: Decode instruction and read registers
@@ -311,4 +311,4 @@ WCET = Σ(instruction_count[i] × cycle_count[i])
 
 ## Conclusion
 
-TempoCore provides a deterministic, predictable execution environment ideal for real-time systems and the Tempo programming language. By eliminating sources of non-determinism and providing hardware support for common patterns, it enables both safety and performance for critical applications.
+ChronosCore provides a deterministic, predictable execution environment ideal for real-time systems and the Chronos programming language. By eliminating sources of non-determinism and providing hardware support for common patterns, it enables both safety and performance for critical applications.

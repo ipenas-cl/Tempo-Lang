@@ -1,20 +1,20 @@
-# Tempo Compiler Documentation
+# Chronos Compiler Documentation
 
 ## Overview
 
-The Tempo compiler is a zero-C-dependency compiler built entirely from assembly language. It follows a multi-stage bootstrap process and generates native executables for each platform.
+The Chronos compiler is a zero-C-dependency compiler built entirely from assembly language. It follows a multi-stage bootstrap process and generates native executables for each platform.
 
 ## Architecture
 
 ### Bootstrap Process
 
 ```
-Assembly → Stage 0 → Stage 1 → Stage 2 → Tempo Compiler
+Assembly → Stage 0 → Stage 1 → Stage 2 → Chronos Compiler
 ```
 
 1. **Stage 0**: Minimal assembly bootstrap
-2. **Stage 1**: Basic Tempo parser in assembly
-3. **Stage 2**: Self-hosting Tempo compiler
+2. **Stage 1**: Basic Chronos parser in assembly
+3. **Stage 2**: Self-hosting Chronos compiler
 4. **Final**: Full-featured compiler with optimizations
 
 ### Platform Support
@@ -28,7 +28,7 @@ Assembly → Stage 0 → Stage 1 → Stage 2 → Tempo Compiler
 ### Input/Output
 
 ```
-source.tempo → Tempo Compiler → source.tempo.app
+source.tempo → Chronos Compiler → source.tempo.app
 ```
 
 Each source file generates its own uniquely named executable:
@@ -162,7 +162,7 @@ tempo --profile program.tempo     # Profile compilation
 
 ## Error Messages
 
-Tempo provides clear, actionable error messages:
+Chronos provides clear, actionable error messages:
 
 ```
 ERROR: WCET violation in function 'process_data'
@@ -190,7 +190,7 @@ ERROR: WCET violation in function 'process_data'
 
 ```yaml
 # GitHub Actions
-- name: Compile Tempo
+- name: Compile Chronos
   run: tempo src/main.tempo
 - name: Verify WCET
   run: tempo --verify-wcet src/main.tempo

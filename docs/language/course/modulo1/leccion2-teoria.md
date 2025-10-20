@@ -17,7 +17,7 @@ Date: June 25, 2025
 - Entender qué es un lenguaje formal y su importancia en compiladores
 - Dominar las gramáticas formales y su notación
 - Conocer la jerarquía de Chomsky y dónde encaja cada tipo
-- Aplicar estos conceptos al diseño de Tempo
+- Aplicar estos conceptos al diseño de Chronos
 
 ## 🧠 Teoría: Lenguajes Formales (20%)
 
@@ -116,7 +116,7 @@ F → ( E ) | número
 
 **Implementación de un parser simple:**
 ```tempo
-// Parser de expresiones en Tempo
+// Parser de expresiones en Chronos
 type TokenType = enum {
     NUMBER,
     PLUS,
@@ -190,9 +190,9 @@ function parse_factor(tokens: []Token, pos: &i32) -> i32 {
 }
 ```
 
-### 3. Diseñando la gramática de Tempo
+### 3. Diseñando la gramática de Chronos
 
-Veamos parte de la gramática real de Tempo:
+Veamos parte de la gramática real de Chronos:
 
 ```
 // Programa
@@ -228,10 +228,10 @@ postfix → primary ("[" expression "]" | "." IDENTIFIER | "(" args? ")")*
 primary → NUMBER | STRING | "true" | "false" | IDENTIFIER | "(" expression ")"
 ```
 
-### 4. Validador de gramática para Tempo
+### 4. Validador de gramática para Chronos
 
 ```tempo
-// Validador simple de sintaxis Tempo
+// Validador simple de sintaxis Chronos
 type GrammarRule = struct {
     name: string,
     patterns: []string
@@ -351,8 +351,8 @@ function dangling_else_example() {
 ### Ejercicio 1: Diseña una gramática
 Crea una gramática formal para:
 1. Direcciones IPv4 (ej: 192.168.1.1)
-2. Identificadores de Tempo (empiezan con letra, pueden tener números y _)
-3. Comentarios de Tempo (// para línea, /* */ para bloque)
+2. Identificadores de Chronos (empiezan con letra, pueden tener números y _)
+3. Comentarios de Chronos (// para línea, /* */ para bloque)
 
 ### Ejercicio 2: Clasificación de lenguajes
 Clasifica estos lenguajes según la jerarquía de Chomsky:
@@ -377,8 +377,8 @@ G2: E → T + E | T
     F → id | (E)
 ```
 
-### Ejercicio 5: Gramática para Tempo
-Diseña reglas gramaticales para estas características de Tempo:
+### Ejercicio 5: Gramática para Chronos
+Diseña reglas gramaticales para estas características de Chronos:
 1. Declaración de arrays con tamaño fijo: `let arr: i32[10]`
 2. Pattern matching: `match x { 0 => "zero", _ => "other" }`
 3. Garantías de tiempo: `function sort(arr: []i32) within O(n log n)`
@@ -395,6 +395,6 @@ La jerarquía de Chomsky fue desarrollada en 1956 por Noam Chomsky mientras estu
 
 ---
 
-**Resumen**: Los lenguajes formales y las gramáticas son la base matemática de los compiladores. La jerarquía de Chomsky nos ayuda a clasificar qué tan complejo es parsear un lenguaje. Tempo usa una gramática cuidadosamente diseñada para ser no ambigua y fácil de parsear.
+**Resumen**: Los lenguajes formales y las gramáticas son la base matemática de los compiladores. La jerarquía de Chomsky nos ayuda a clasificar qué tan complejo es parsear un lenguaje. Chronos usa una gramática cuidadosamente diseñada para ser no ambigua y fácil de parsear.
 
 [← Lección 1](leccion1-intro.md) | [Índice](../README.md) | [Lección 3: Autómatas →](leccion3-automatas.md)
