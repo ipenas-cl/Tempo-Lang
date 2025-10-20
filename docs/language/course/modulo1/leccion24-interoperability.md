@@ -149,7 +149,7 @@ impl MigrationTracker {
         self.rollback_checkpoints.push(checkpoint);
         
         // Configure traffic routing
-        self.configure_traffic_routing(phase.legacy_percentage, phase.tempo_percentage)?;
+        self.configure_traffic_routing(phase.legacy_percentage, phase.ch_percentage)?;
         
         // Monitor phase execution
         let mut phase_metrics = PhaseMetrics::new();

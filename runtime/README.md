@@ -1,4 +1,3 @@
-# Chronos Runtime - AtomicOS
 
 The deterministic operating system kernel and runtime for Chronos applications.
 

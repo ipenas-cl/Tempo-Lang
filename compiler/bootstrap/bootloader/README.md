@@ -15,9 +15,7 @@
 
 ---
 
-# AtomicOS Bootloader
 
-A complete UEFI/BIOS bootloader for AtomicOS that supports both legacy BIOS and modern UEFI systems.
 
 ## Features
 
@@ -40,7 +38,7 @@ A complete UEFI/BIOS bootloader for AtomicOS that supports both legacy BIOS and 
    - Loads Stage 2 from disk
    - Jumps to Stage 2
 
-2. **Stage 2 (stage2.tempo)**:
+2. **Stage 2 (stage2.ch)**:
    - Runs in real mode initially
    - Detects system memory
    - Sets up GDT and page tables
@@ -50,7 +48,7 @@ A complete UEFI/BIOS bootloader for AtomicOS that supports both legacy BIOS and 
 
 ### UEFI Boot Path
 
-1. **UEFI Application (boot.tempo)**:
+1. **UEFI Application (boot.ch)**:
    - Loaded by UEFI firmware
    - Uses UEFI protocols for:
      - Memory detection
@@ -108,17 +106,17 @@ make test-uefi
 bootloader/
 ├── bios/
 │   ├── boot.s          # Stage 1 bootloader (assembly)
-│   ├── stage2.tempo    # Stage 2 bootloader (Chronos)
+│   ├── stage2.ch    # Stage 2 bootloader (Chronos)
 │   └── link.ld         # Linker script for BIOS
 ├── uefi/
-│   ├── boot.tempo      # UEFI bootloader (Chronos)
-│   ├── uefi.tempo      # UEFI protocol definitions
+│   ├── boot.ch      # UEFI bootloader (Chronos)
+│   ├── uefi.ch      # UEFI protocol definitions
 │   └── link.ld         # Linker script for UEFI
 ├── common/
-│   ├── multiboot.tempo # Multiboot structures
-│   ├── memory.tempo    # Memory management
-│   ├── vga.tempo       # VGA text output
-│   └── elf.tempo       # ELF loader
+│   ├── multiboot.ch # Multiboot structures
+│   ├── memory.ch    # Memory management
+│   ├── vga.ch       # VGA text output
+│   └── elf.ch       # ELF loader
 ├── Makefile            # Build system
 ├── build.sh            # Alternative build script
 └── README.md           # This file

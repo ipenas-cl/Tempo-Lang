@@ -59,7 +59,7 @@ WCET = Path Analysis + Low-Level Analysis + Cache Analysis + Pipeline Analysis
 ### Representación del CFG para WCET
 
 ```tempo
-// wcet_analyzer.tempo - Análisis WCET para Chronos
+// wcet_analyzer.ch - Análisis WCET para Chronos
 
 struct WCETAnalyzer {
     cfg: *ControlFlowGraph,

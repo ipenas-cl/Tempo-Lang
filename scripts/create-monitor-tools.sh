@@ -310,7 +310,7 @@ fi
 echo ""
 echo "🚀 Next Steps:"
 echo "   1. Recompile your application:"
-echo "      tempo $APP.tempo"
+echo "      tempo $APP.ch"
 echo "   2. PGO optimizations will be automatically applied"
 echo "   3. Expect 20-50% performance improvement"
 echo ""

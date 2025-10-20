@@ -25,6 +25,6 @@ v0.0.1 - Versión inicial con funcionalidad básica:
 ## Uso
 
 ```bash
-tempo programa.tempo
+tempo programa.ch
 ./stage1
 ```

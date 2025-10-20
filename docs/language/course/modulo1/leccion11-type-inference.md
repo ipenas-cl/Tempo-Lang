@@ -62,7 +62,7 @@ El algoritmo W de Damas-Milner realiza inferencia en dos fases:
 ### Representación de Tipos para Inferencia
 
 ```tempo
-// type_inference.tempo - Sistema de inferencia de tipos HM
+// type_inference.ch - Sistema de inferencia de tipos HM
 
 enum TypeExpr {
     TYPE_VAR,           // Variable de tipo

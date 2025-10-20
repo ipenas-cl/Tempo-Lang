@@ -47,7 +47,6 @@ manifest ChronosRevolution {
 3. [Sistema de Tipos Revolucionario](#tipos)
 4. [Sintaxis Multi-Nivel](#sintaxis)
 5. [Compilador y Seguridad](#compilador)
-6. [AtomicOS: El Sistema Operativo](#atomicos)
 7. [Ecosistema y Herramientas](#ecosistema)
 8. [Casos de Uso y Democratización](#casos)
 9. [Roadmap de Implementación](#roadmap)
@@ -76,7 +75,6 @@ Un lenguaje que es:
 2. **Tres niveles de sintaxis** (Usuario, Profesional, Sistema)
 3. **Compilador directo a assembly** sin capas intermedias
 4. **Elastic Determinism™** para escalabilidad dinámica
-5. **Kernel bypass** en AtomicOS para 100x performance
 
 ---
 
@@ -93,9 +91,7 @@ architecture ChronosStack {
         via: syscall_translation
     }
     
-    // Capa 2: AtomicOS Nativo (10x más rápido)
     layer native {
-        kernel: AtomicOS
         performance: "10x mejor que Linux"
         via: direct_hardware_access
     }
@@ -233,17 +229,15 @@ compiler security_layers {
 
 ### Pipeline de Compilación
 ```tempo
-source.tempo → Parser → AST → Type Check → WCET Analysis → 
+source.ch → Parser → AST → Type Check → WCET Analysis → 
 Optimization → Assembly → Binary con 12 capas de seguridad
 ```
 
 ---
 
-## 6. ATOMICOS: EL SISTEMA OPERATIVO {#atomicos}
 
 ### Arquitectura Microkernel
 ```tempo
-kernel AtomicOS {
     // Solo lo esencial en kernel space
     core: {
         scheduler: deterministic
@@ -275,7 +269,7 @@ kernel AtomicOS {
 tempo debug myapp --live
 
 → Conectando a proceso #1234...
-┌─ inventory.tempo:45 ─────────────────────┐
+┌─ inventory.ch:45 ─────────────────────┐
 │ 43  when product_scanned(barcode) {     │
 │ 44    product = find_product(barcode)   │
 │ 45 →  if product.stock > 0 {            │ ← Aquí
@@ -386,7 +380,6 @@ app GrowingBusiness {
 - [ ] Code generation para x86/ARM
 - [ ] Debugger básico
 
-### Fase 2: AtomicOS Alpha (6 meses)
 - [ ] Microkernel determinístico
 - [ ] Drivers básicos
 - [ ] TCP/IP stack

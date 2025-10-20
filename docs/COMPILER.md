@@ -28,12 +28,12 @@ Assembly → Stage 0 → Stage 1 → Stage 2 → Chronos Compiler
 ### Input/Output
 
 ```
-source.tempo → Chronos Compiler → source.tempo.app
+source.ch → Chronos Compiler → source.ch.app
 ```
 
 Each source file generates its own uniquely named executable:
-- `hello.tempo` → `hello.tempo.app`
-- `payment-service.tempo` → `payment-service.tempo.app`
+- `hello.ch` → `hello.ch.app`
+- `payment-service.ch` → `payment-service.ch.app`
 
 ### Compilation Steps
 
@@ -64,11 +64,11 @@ The compiler is built without any C dependencies:
 ### Optimization Levels
 
 ```bash
-tempo -O0 program.tempo  # No optimization (fastest compile)
-tempo -O1 program.tempo  # Basic optimizations
-tempo -O2 program.tempo  # Standard optimizations (default)
-tempo -O3 program.tempo  # Aggressive optimizations
-tempo -Opgo program.tempo # Profile-Guided Optimization
+tempo -O0 program.ch  # No optimization (fastest compile)
+tempo -O1 program.ch  # Basic optimizations
+tempo -O2 program.ch  # Standard optimizations (default)
+tempo -O3 program.ch  # Aggressive optimizations
+tempo -Opgo program.ch # Profile-Guided Optimization
 ```
 
 ### Security Features
@@ -132,7 +132,7 @@ cd compiler/tests
 ./run-tests.sh
 
 # Verify WCET compliance
-tempo --verify-wcet test.tempo
+tempo --verify-wcet test.ch
 ```
 
 ## Debugging Compilation
@@ -140,24 +140,24 @@ tempo --verify-wcet test.tempo
 ### Verbose Output
 
 ```bash
-tempo -v program.tempo     # Verbose
-tempo -vv program.tempo    # Very verbose
-tempo -vvv program.tempo   # Debug level
+tempo -v program.ch     # Verbose
+tempo -vv program.ch    # Very verbose
+tempo -vvv program.ch   # Debug level
 ```
 
 ### Intermediate Representations
 
 ```bash
-tempo --emit-ast program.tempo    # Output AST
-tempo --emit-ir program.tempo     # Output IR
-tempo --emit-asm program.tempo    # Output assembly
+tempo --emit-ast program.ch    # Output AST
+tempo --emit-ir program.ch     # Output IR
+tempo --emit-asm program.ch    # Output assembly
 ```
 
 ### Timing Analysis
 
 ```bash
-tempo --show-wcet program.tempo   # Display WCET analysis
-tempo --profile program.tempo     # Profile compilation
+tempo --show-wcet program.ch   # Display WCET analysis
+tempo --profile program.ch     # Profile compilation
 ```
 
 ## Error Messages
@@ -166,7 +166,7 @@ Chronos provides clear, actionable error messages:
 
 ```
 ERROR: WCET violation in function 'process_data'
-  --> payment.tempo:45:5
+  --> payment.ch:45:5
    |
 45 | fn process_data(input: &[u8]) -> Result<Data, Error> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -182,7 +182,7 @@ ERROR: WCET violation in function 'process_data'
 
 ```makefile
 # Makefile
-%.tempo.app: %.tempo
+%.ch.app: %.ch
     tempo $< -o $@
 ```
 
@@ -191,9 +191,9 @@ ERROR: WCET violation in function 'process_data'
 ```yaml
 # GitHub Actions
 - name: Compile Chronos
-  run: tempo src/main.tempo
+  run: tempo src/main.ch
 - name: Verify WCET
-  run: tempo --verify-wcet src/main.tempo
+  run: tempo --verify-wcet src/main.ch
 ```
 
 ## Performance

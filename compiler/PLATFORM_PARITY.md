@@ -48,16 +48,13 @@
 - [ ] Deterministic memory allocator
 - [ ] WCET analysis in bootstrap
 
-## Architecture for AtomicOS
 
-The Chronos compiler will be the foundation for AtomicOS development:
 
 1. **Bootloader**: Written in Chronos, compiled to flat binary
 2. **Kernel**: Pure Chronos with deterministic guarantees
 3. **Drivers**: Chronos with hardware abstraction layer
 4. **Userspace**: All utilities in Chronos
 
-### Key Requirements for AtomicOS
 
 1. **Deterministic Execution**
    - Bounded loops only

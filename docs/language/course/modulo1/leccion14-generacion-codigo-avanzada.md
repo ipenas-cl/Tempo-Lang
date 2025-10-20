@@ -50,7 +50,7 @@ Ordenar instrucciones para maximizar ILP:
 ### Linear Scan Register Allocation
 
 ```tempo
-// linear_scan.tempo - Algoritmo de asignación lineal
+// linear_scan.ch - Algoritmo de asignación lineal
 
 struct LinearScanAllocator {
     intervals: **LiveInterval,
@@ -274,7 +274,7 @@ fn try_split_interval(allocator: *LinearScanAllocator,
 ### Graph Coloring Register Allocation
 
 ```tempo
-// graph_coloring.tempo - Asignación por coloreo de grafos (Chaitin-Briggs)
+// graph_coloring.ch - Asignación por coloreo de grafos (Chaitin-Briggs)
 
 struct GraphColoringAllocator {
     interference_graph: *InterferenceGraph,
@@ -523,7 +523,7 @@ fn compute_spill_cost(node: *IGraphNode) -> f64 {
 ### Instruction Selection
 
 ```tempo
-// instruction_selection.tempo - Selección de instrucciones con pattern matching
+// instruction_selection.ch - Selección de instrucciones con pattern matching
 
 struct InstructionSelector {
     target: *TargetMachine,
@@ -748,7 +748,7 @@ fn create_x86_patterns() -> *PatternDatabase {
 ### Instruction Scheduling
 
 ```tempo
-// instruction_scheduling.tempo - Scheduling para maximizar ILP
+// instruction_scheduling.ch - Scheduling para maximizar ILP
 
 struct InstructionScheduler {
     target: *TargetMachine,
@@ -955,7 +955,7 @@ fn modulo_schedule_loop(loop: *MachineLoop) -> *ModuloSchedule {
 ### Generación de Código Máquina
 
 ```tempo
-// code_emission.tempo - Emisión final de código máquina
+// code_emission.ch - Emisión final de código máquina
 
 struct CodeEmitter {
     target: *TargetMachine,

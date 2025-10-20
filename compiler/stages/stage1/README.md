@@ -53,7 +53,7 @@ cd ../stage0
 make
 
 # Compilar stage1 con stage0
-./tempo0 ../stage1/compiler.tempo ../stage1/compiler.s
+./tempo0 ../stage1/compiler.ch ../stage1/compiler.s
 
 # Ensamblar y linkear
 nasm -f elf64 ../stage1/compiler.s -o ../stage1/compiler.o

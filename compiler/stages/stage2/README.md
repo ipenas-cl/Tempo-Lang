@@ -34,20 +34,20 @@ Stage 2 is the production-ready Chronos compiler written in Chronos itself. It p
 
 ### Core Compiler Pipeline
 
-- `lexer.tempo` - Advanced tokenizer with error recovery and position tracking
-- `parser.tempo` - Recursive descent parser with comprehensive AST generation
-- `ast.tempo` - Abstract Syntax Tree definitions with source location tracking
-- `types.tempo` - Advanced type system with WCET type annotations
-- `errors.tempo` - Comprehensive error handling and reporting system
-- `wcet.tempo` - WCET analysis engine with bound verification
-- `optimizer.tempo` - Multi-pass optimization framework with deterministic passes
-- `codegen.tempo` - Target-specific code generation with WCET annotations
-- `compiler.tempo` - Main compiler driver and command-line interface
+- `lexer.ch` - Advanced tokenizer with error recovery and position tracking
+- `parser.ch` - Recursive descent parser with comprehensive AST generation
+- `ast.ch` - Abstract Syntax Tree definitions with source location tracking
+- `types.ch` - Advanced type system with WCET type annotations
+- `errors.ch` - Comprehensive error handling and reporting system
+- `wcet.ch` - WCET analysis engine with bound verification
+- `optimizer.ch` - Multi-pass optimization framework with deterministic passes
+- `codegen.ch` - Target-specific code generation with WCET annotations
+- `compiler.ch` - Main compiler driver and command-line interface
 
 ### Test Files
 
-- `parser_example.tempo` - Example Chronos program for testing
-- `parser_tests.tempo` - Comprehensive parser test suite
+- `parser_example.ch` - Example Chronos program for testing
+- `parser_tests.ch` - Comprehensive parser test suite
 
 ## 🚀 Key Features
 
@@ -86,7 +86,7 @@ Stage 2 is the production-ready Chronos compiler written in Chronos itself. It p
 ## 🏗️ Compilation Pipeline
 
 ```
-Source Code (.tempo)
+Source Code (.ch)
     ↓
 [Lexical Analysis] → Tokens with position info
     ↓
@@ -139,29 +139,29 @@ The optimizer uses a multi-pass architecture with the following phases:
 
 ```bash
 # Compile with default settings
-./stage2/tempo2 program.tempo -o program
+./stage2/tempo2 program.ch -o program
 
 # Compile with optimization
-./stage2/tempo2 program.tempo -O2 -o program
+./stage2/tempo2 program.ch -O2 -o program
 
 # Compile for specific target
-./stage2/tempo2 program.tempo --target arm64-linux -o program
+./stage2/tempo2 program.ch --target arm64-linux -o program
 ```
 
 ### Advanced Options
 
 ```bash
 # Enable WCET analysis
-./stage2/tempo2 program.tempo --wcet-analysis -o program
+./stage2/tempo2 program.ch --wcet-analysis -o program
 
 # Deterministic compilation with verification
-./stage2/tempo2 program.tempo --deterministic --verify-determinism -o program
+./stage2/tempo2 program.ch --deterministic --verify-determinism -o program
 
 # Emit intermediate representations
-./stage2/tempo2 program.tempo --emit-ast --emit-ir --emit-asm -o program
+./stage2/tempo2 program.ch --emit-ast --emit-ir --emit-asm -o program
 
 # Verbose compilation with statistics
-./stage2/tempo2 program.tempo -v --benchmark -o program
+./stage2/tempo2 program.ch -v --benchmark -o program
 ```
 
 ### Optimization Levels
@@ -178,24 +178,24 @@ The optimizer uses a multi-pass architecture with the following phases:
 
 ```bash
 cd stage1
-./tempo1 ../stage2/compiler.tempo ../stage2/tempo2
+./tempo1 ../stage2/compiler.ch ../stage2/tempo2
 ```
 
 ### Self-Hosting (if Stage 2 already exists)
 
 ```bash
 cd stage2
-./tempo2 compiler.tempo tempo2-new
+./tempo2 compiler.ch tempo2-new
 ```
 
 ### Testing
 
 ```bash
 # Run parser tests
-./tempo2 parser_tests.tempo
+./tempo2 parser_tests.ch
 
 # Test with example program
-./tempo2 parser_example.tempo -o example
+./tempo2 parser_example.ch -o example
 ./example
 ```
 

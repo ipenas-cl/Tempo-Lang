@@ -11,7 +11,6 @@ June 2025
 - Conceived the vision of deterministic programming for democratizing computing
 - Designed the Chronos language syntax and semantics
 - Implemented the 3-stage bootstrap compiler
-- Created AtomicOS - the deterministic operating system
 - Developed the no-import philosophy for offline-first programming
 - Wrote the Chronos Bible and comprehensive documentation
 - Designed the revolutionary compiler course (27 lessons)

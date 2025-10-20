@@ -22,10 +22,10 @@ fn main() -> i32 {
 
 ### 1. Prelude Automático
 
-El compilador **siempre** incluye automáticamente `src/std/prelude.tempo`:
+El compilador **siempre** incluye automáticamente `src/std/prelude.ch`:
 
 ```tempo
-// src/std/prelude.tempo - Incluido en CADA programa Chronos
+// src/std/prelude.ch - Incluido en CADA programa Chronos
 // NO es un import - es parte del lenguaje mismo
 
 // Tipos básicos disponibles globalmente
@@ -59,10 +59,9 @@ fn main() -> i32 {
 Un mismo compilador genera binarios para todos los OS:
 
 ```bash
-tempo build --target linux   hello.tempo  # ELF binary
-tempo build --target macos   hello.tempo  # Mach-O binary  
-tempo build --target windows hello.tempo  # PE binary
-tempo build --target atomicos hello.tempo # AtomicOS binary
+tempo build --target linux   hello.ch  # ELF binary
+tempo build --target macos   hello.ch  # Mach-O binary  
+tempo build --target windows hello.ch  # PE binary
 ```
 
 ## 📚 Biblioteca Estándar Completa
@@ -248,7 +247,6 @@ exit(code: i32) -> never
 exec(cmd: string, args: Vec<string>) -> Result<Output, Error>
 
 // OS Info
-os() -> string              // "linux", "macos", "windows", "atomicos"
 arch() -> string            // "x86_64", "arm64"
 cpu_count() -> u32
 total_memory() -> u64
@@ -374,35 +372,32 @@ El compilador analiza y solo incluye:
 
 ```makefile
 # Makefile ejemplo
-all: linux macos windows atomicos
 
 linux:
-    tempo build --target linux --output app-linux main.tempo
+    tempo build --target linux --output app-linux main.ch
 
 macos:
-    tempo build --target macos --output app-macos main.tempo
+    tempo build --target macos --output app-macos main.ch
 
 windows:
-    tempo build --target windows --output app.exe main.tempo
+    tempo build --target windows --output app.exe main.ch
 
-atomicos:
-    tempo build --target atomicos --output app.aos main.tempo
 ```
 
 ### Flags de Optimización
 
 ```bash
 # Debug build
-tempo build --debug main.tempo
+tempo build --debug main.ch
 
 # Release optimizado
-tempo build --release --O3 main.tempo
+tempo build --release --O3 main.ch
 
 # Release con WCET analysis
-tempo build --release --wcet --max-time 1ms main.tempo
+tempo build --release --wcet --max-time 1ms main.ch
 
 # Tiny binary (máximo tree shaking)
-tempo build --release --tiny main.tempo
+tempo build --release --tiny main.ch
 ```
 
 ## 📊 Comparación con Otros Lenguajes

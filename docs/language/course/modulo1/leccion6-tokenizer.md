@@ -717,7 +717,7 @@ skip_whitespace:
 ```assembly
 ; test_tokenizer.s - Programa para probar el tokenizer
 section .data
-    test_file db "test.tempo", 0
+    test_file db "test.ch", 0
     
     token_names:
         db "EOF", 0

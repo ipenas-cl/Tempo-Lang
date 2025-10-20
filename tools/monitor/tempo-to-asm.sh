@@ -2,12 +2,12 @@
 # Tempo to Assembly compiler wrapper
 
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <file.tempo>"
+    echo "Usage: $0 <file.ch>"
     exit 1
 fi
 
 INPUT=$1
-BASENAME="${INPUT%.tempo}"
+BASENAME="${INPUT%.ch}"
 
 # Generate assembly
 cat > "$BASENAME.s" << 'EOF'

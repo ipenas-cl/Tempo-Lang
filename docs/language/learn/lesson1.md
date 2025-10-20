@@ -10,7 +10,7 @@ Welcome to programming with Chronos! In this lesson, you'll write and run your f
 
 ## Your First Program
 
-Create a file called `hello.tempo`:
+Create a file called `hello.ch`:
 
 ```tempo
 fn main() -> i32 {
@@ -43,7 +43,7 @@ Let's break it down line by line:
 
 ```bash
 # Compile it
-bin/tempo hello.tempo
+bin/tempo hello.ch
 
 # Run it
 ./stage1

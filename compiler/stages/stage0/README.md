@@ -55,8 +55,8 @@ make
 # - tempo0: El compilador bootstrap
 # - hello: Programa de prueba compilado
 
-# Compilar un archivo .tempo manualmente
-./tempo0 programa.tempo programa.s
+# Compilar un archivo .ch manualmente
+./tempo0 programa.ch programa.s
 nasm -f elf64 programa.s -o programa.o
 ld -o programa programa.o
 ./programa
@@ -65,7 +65,7 @@ ld -o programa programa.o
 ## Arquitectura
 
 ```
-hello.tempo → [TOKENIZER] → [PARSER] → [AST] → [CODEGEN] → hello.s
+hello.ch → [TOKENIZER] → [PARSER] → [AST] → [CODEGEN] → hello.s
 ```
 
 ### Tokenizer
@@ -85,10 +85,10 @@ hello.tempo → [TOKENIZER] → [PARSER] → [AST] → [CODEGEN] → hello.s
 
 ## Próximos pasos
 
-Una vez que este bootstrap funciona, lo usamos para compilar `stage1.tempo`:
+Una vez que este bootstrap funciona, lo usamos para compilar `stage1.ch`:
 
 ```tempo
-// stage1.tempo - Compilador más completo escrito en Chronos
+// stage1.ch - Compilador más completo escrito en Chronos
 type Token = Keyword(string) | Identifier(string) | Number(i64) | ...
 
 function tokenize(source: string) -> Array<Token> {

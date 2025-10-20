@@ -67,7 +67,7 @@ fn hash<T: Hash + Eq>(value: &T) -> u64 {
 ### Representación de Tipos Genéricos
 
 ```tempo
-// generics.tempo - Sistema de generics para Chronos
+// generics.ch - Sistema de generics para Chronos
 
 struct GenericType {
     base_type: Type,
@@ -200,7 +200,7 @@ fn infer_type_arguments(tc: *TypeChecker, call: *CallExpr,
 ### Monomorphization
 
 ```tempo
-// monomorphization.tempo - Generación de código especializado
+// monomorphization.ch - Generación de código especializado
 
 struct Monomorphizer {
     module: *Module,
@@ -366,7 +366,7 @@ fn append_type_mangled(name: *StringBuilder, type: *Type) {
 ### Traits y Type Classes
 
 ```tempo
-// traits.tempo - Sistema de traits para polimorfismo con constraints
+// traits.ch - Sistema de traits para polimorfismo con constraints
 
 struct Trait {
     name: *char,
@@ -504,7 +504,7 @@ fn call_trait_method(obj: *TraitObject, method_index: i32, args: **void) -> *voi
 ### Especialización y Optimización
 
 ```tempo
-// specialization.tempo - Optimizaciones específicas para tipos concretos
+// specialization.ch - Optimizaciones específicas para tipos concretos
 
 struct SpecializationPass {
     module: *Module,
@@ -642,7 +642,7 @@ fn devirtualize_trait_calls(module: *Module) {
 ### Variance y Lifetimes
 
 ```tempo
-// variance.tempo - Análisis de varianza para type safety
+// variance.ch - Análisis de varianza para type safety
 
 enum Variance {
     COVARIANT,      // T<A> -> T<B> si A -> B
@@ -747,7 +747,7 @@ fn type_check_higher_ranked(tc: *TypeChecker, hrt: *HigherRankedType,
 ### Optimizaciones Avanzadas para Generics
 
 ```tempo
-// generic_optimizations.tempo - Optimizaciones específicas para código genérico
+// generic_optimizations.ch - Optimizaciones específicas para código genérico
 
 // Shape analysis para eliminar boxing
 struct ShapeAnalysis {

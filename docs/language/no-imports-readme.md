@@ -47,7 +47,7 @@ Chronos eliminates the concept of imports entirely. Every standard library funct
 
 ### 1. The Prelude System
 
-Every Chronos program automatically includes `prelude.tempo`:
+Every Chronos program automatically includes `prelude.ch`:
 
 ```tempo
 // Automatically available - no imports needed:
@@ -67,19 +67,19 @@ The compiler only includes what you actually use:
 
 ```bash
 # Hello World: ~48KB binary (only includes println + deps)
-tempo build hello.tempo
+tempo build hello.ch
 
 # TCP Server: ~156KB binary (includes networking)
-tempo build server.tempo
+tempo build server.ch
 
 # Full Redis Clone: ~245KB binary (includes everything needed)
-tempo build redis-killer.tempo
+tempo build redis-killer.ch
 ```
 
 ### 3. Example: Building Redis Without Imports
 
 ```tempo
-// redis-killer.tempo - No imports!
+// redis-killer.ch - No imports!
 func main() {
     let server = Server{
         db: Database::new(),
@@ -181,33 +181,33 @@ func main() {
 
 2. **Write code** (no project setup needed)
    ```bash
-   echo 'func main() { println("Hello!") }' > hello.tempo
+   echo 'func main() { println("Hello!") }' > hello.ch
    ```
 
 3. **Compile and run**
    ```bash
-   tempo run hello.tempo
+   tempo run hello.ch
    ```
 
 ## Advanced Features
 
 ### See What's Included
 ```bash
-tempo build --show-tree-shaking myapp.tempo
+tempo build --show-tree-shaking myapp.ch
 ```
 
 ### Visualize Dependencies
 ```bash
-tempo build --call-graph myapp.tempo | dot -Tpng > graph.png
+tempo build --call-graph myapp.ch | dot -Tpng > graph.png
 ```
 
 ### Compare Binary Sizes
 ```bash
 # With tree-shaking (default)
-tempo build myapp.tempo -o myapp-optimized
+tempo build myapp.ch -o myapp-optimized
 
 # Without tree-shaking (includes everything)
-tempo build --no-tree-shaking myapp.tempo -o myapp-full
+tempo build --no-tree-shaking myapp.ch -o myapp-full
 
 ls -lh myapp-*
 ```
@@ -216,10 +216,10 @@ ls -lh myapp-*
 
 Check out these examples that work without any imports:
 
-- [Redis Killer](../redis-killer-no-imports.tempo) - Full Redis-compatible server
-- [Tree Shaking Demo](../examples/tree_shaking_demo.tempo) - See optimization in action
-- [TCP Echo Server](../examples/echo-server.tempo) - Network programming made simple
-- [Calculator](../examples/calculator.tempo) - Math without imports
+- [Redis Killer](../redis-killer-no-imports.ch) - Full Redis-compatible server
+- [Tree Shaking Demo](../examples/tree_shaking_demo.ch) - See optimization in action
+- [TCP Echo Server](../examples/echo-server.ch) - Network programming made simple
+- [Calculator](../examples/calculator.ch) - Math without imports
 
 ## FAQ
 

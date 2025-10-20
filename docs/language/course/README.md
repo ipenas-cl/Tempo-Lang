@@ -119,7 +119,6 @@ Elegir uno:
 1. Agregar una característica nueva a Chronos
 2. Port Chronos a una arquitectura nueva
 3. Crear una aplicación innovadora en Chronos
-4. Contribuir al AtomicOS
 
 ---
 

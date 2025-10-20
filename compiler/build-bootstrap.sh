@@ -21,6 +21,6 @@ chmod +x bootstrap0
 echo "✅ Bootstrap binario creado!"
 echo ""
 echo "Ahora puedes compilar Tempo sin C:"
-echo "  ./bootstrap0 stage1.tempo"
+echo "  ./bootstrap0 stage1.ch"
 echo ""
 echo "[T∞] Cero dependencias de C - Tempo puro!"

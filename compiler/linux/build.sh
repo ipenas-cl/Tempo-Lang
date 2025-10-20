@@ -14,7 +14,7 @@ echo "✅ Built tempo-compiler for Linux"
 # Test if we can
 if [ -f tempo-compiler ]; then
     echo "🧪 Testing Linux compiler..."
-    ./tempo-compiler hello.tempo
+    ./tempo-compiler hello.ch
     
     if [ -f stage1 ]; then
         echo "📦 Generated stage1"

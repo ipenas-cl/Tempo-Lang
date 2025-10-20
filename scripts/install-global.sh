@@ -118,8 +118,8 @@ Send intelligent alert to SRE team with system context
 
 .SH EXAMPLES
 .TP
-.B tempo hello.tempo
-Compile hello.tempo to tempo.app executable
+.B tempo hello.ch
+Compile hello.ch to tempo.app executable
 .TP
 .B tempo monitor
 Launch system monitoring for all Tempo applications
@@ -202,7 +202,7 @@ echo ""
 echo "✅ Tempo is now installed globally and available from anywhere:"
 echo "   tempo --help              # Show help"
 echo "   tempo --version           # Show version"  
-echo "   tempo myprogram.tempo     # Compile program"
+echo "   tempo myprogram.ch     # Compile program"
 echo "   tempo monitor             # Launch monitoring"
 echo ""
 echo "📁 Installation locations:"
@@ -212,8 +212,8 @@ echo "   Documentation: /usr/local/share/doc/tempo/"
 echo "   Manual:        man tempo"
 echo ""
 echo "🎯 Test your installation:"
-echo "   echo 'fn main() -> i32 { return 0; }' > test.tempo"
-echo "   tempo test.tempo"
+echo "   echo 'fn main() -> i32 { return 0; }' > test.ch"
+echo "   tempo test.ch"
 echo "   ./tempo.app"
 echo ""
 echo "🏆 AtomicOS Ecosystem Ready Globally!"

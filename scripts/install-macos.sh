@@ -83,12 +83,12 @@ if [ $# -eq 0 ]; then
     echo "Tempo Programming Language v0.0.1"
     echo ""
     echo "Usage:"
-    echo "  tempo <file.tempo>    Compile a Tempo program"
+    echo "  tempo <file.ch>    Compile a Tempo program"
     echo "  tempo --version       Show version"
     echo "  tempo --help          Show this help"
     echo ""
     echo "Examples:"
-    echo "  tempo hello.tempo     # Compiles to 'stage1'"
+    echo "  tempo hello.ch     # Compiles to 'stage1'"
     echo "  ./stage1              # Run the compiled program"
     echo ""
     exit 0
@@ -118,9 +118,9 @@ if [ ! -f "$1" ]; then
     exit 1
 fi
 
-# Check if it's a .tempo file
-if [[ "$1" != *.tempo ]]; then
-    echo "❌ File must have .tempo extension"
+# Check if it's a .ch file
+if [[ "$1" != *.ch ]]; then
+    echo "❌ File must have .ch extension"
     exit 1
 fi
 
@@ -152,5 +152,5 @@ echo "✅ ¡Tempo v0.0.1 instalado exitosamente!"
 echo ""
 echo "Prueba con:"
 echo "  tempo --version"
-echo "  tempo hello.tempo"
+echo "  tempo hello.ch"
 echo ""

@@ -52,7 +52,7 @@ Chronos embraces a radical approach to standard library design: **everything is 
 
 ### The Prelude System
 
-Every Chronos program implicitly includes `prelude.tempo`, which contains:
+Every Chronos program implicitly includes `prelude.ch`, which contains:
 
 ```tempo
 // Automatically available in every Chronos file:

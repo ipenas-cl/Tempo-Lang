@@ -73,7 +73,7 @@ y₁ = x₃ + 1
 ### Construcción de SSA
 
 ```tempo
-// ssa_construction.tempo - Algoritmo de construcción SSA
+// ssa_construction.ch - Algoritmo de construcción SSA
 
 struct SSABuilder {
     cfg: *ControlFlowGraph,
@@ -291,7 +291,7 @@ fn rename_block(builder: *SSABuilder, block: *BasicBlock) {
 ### Constant Folding y Propagation
 
 ```tempo
-// constant_folding.tempo - Evaluación de constantes en compile time
+// constant_folding.ch - Evaluación de constantes en compile time
 
 struct ConstantFolder {
     ssa: *SSAForm,
@@ -458,7 +458,7 @@ fn sccp(ssa: *SSAForm) {
 ### Dead Code Elimination
 
 ```tempo
-// dead_code_elimination.tempo - Eliminar código muerto
+// dead_code_elimination.ch - Eliminar código muerto
 
 struct DCEPass {
     ssa: *SSAForm,
@@ -583,7 +583,7 @@ fn adce(ssa: *SSAForm) -> bool {
 ### Common Subexpression Elimination (CSE)
 
 ```tempo
-// cse.tempo - Eliminar subexpresiones comunes
+// cse.ch - Eliminar subexpresiones comunes
 
 struct CSEPass {
     ssa: *SSAForm,
@@ -710,7 +710,7 @@ fn process_block_gvn(gvn: *GVNPass, block: *BasicBlock) -> bool {
 ### Loop Optimizations
 
 ```tempo
-// loop_optimizations.tempo - Optimizaciones específicas de loops
+// loop_optimizations.ch - Optimizaciones específicas de loops
 
 struct LoopOptimizer {
     ssa: *SSAForm,
@@ -885,7 +885,7 @@ fn fuse_loops(optimizer: *LoopOptimizer, loop1: *Loop, loop2: *Loop) -> bool {
 ### Framework de Optimización
 
 ```tempo
-// optimization_framework.tempo - Framework extensible para optimizaciones
+// optimization_framework.ch - Framework extensible para optimizaciones
 
 struct OptimizationPass {
     name: *char,

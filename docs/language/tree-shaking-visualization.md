@@ -195,18 +195,18 @@ Image Sizes:
 
 ```bash
 # See what functions are included
-tempo build --show-tree-shaking main.tempo
+tempo build --show-tree-shaking main.ch
 
 # Generate tree-shaking report
-tempo build --tree-shake-report main.tempo
+tempo build --tree-shake-report main.ch
 
 # Visualize call graph
-tempo build --call-graph main.tempo > graph.dot
+tempo build --call-graph main.ch > graph.dot
 dot -Tpng graph.dot > graph.png
 
 # Compare with/without tree-shaking
-tempo build --no-tree-shaking main.tempo -o main-full
-tempo build main.tempo -o main-optimized
+tempo build --no-tree-shaking main.ch -o main-full
+tempo build main.ch -o main-optimized
 ls -lh main-*
 ```
 

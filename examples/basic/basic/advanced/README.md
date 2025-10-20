@@ -13,19 +13,18 @@ A complete port of the classic DOOM game, demonstrating:
 ### Architecture:
 ```
 doom/
-├── main.tempo           # Entry point and game loop
-├── renderer.tempo       # Software renderer
-├── game_logic.tempo     # Game state and physics
-├── wad_loader.tempo     # WAD file parser
-├── audio.tempo          # Sound system
-└── network.tempo        # Multiplayer support
+├── main.ch           # Entry point and game loop
+├── renderer.ch       # Software renderer
+├── game_logic.ch     # Game state and physics
+├── wad_loader.ch     # WAD file parser
+├── audio.ch          # Sound system
+└── network.ch        # Multiplayer support
 ```
 
 ### Key Features:
 - Fixed 35Hz game logic (like original DOOM)
 - Deterministic RNG for demo playback
 - Memory-safe implementation
-- Runs on AtomicOS
 
 ## 🐳 AtomicOrchestrator
 
@@ -40,11 +39,11 @@ A deterministic container orchestrator (like Kubernetes) with real-time guarante
 ### Architecture:
 ```
 orchestrator/
-├── atomicorchestrator.tempo  # Main orchestrator logic
-├── scheduler.tempo           # Pod scheduling algorithm
-├── container.tempo           # Container management
-├── network_policy.tempo      # Network isolation
-└── storage.tempo             # Persistent volume management
+├── atomicorchestrator.ch  # Main orchestrator logic
+├── scheduler.ch           # Pod scheduling algorithm
+├── container.ch           # Container management
+├── network_policy.ch      # Network isolation
+└── storage.ch             # Persistent volume management
 ```
 
 ### Use Cases:
@@ -59,7 +58,7 @@ All examples follow the same pattern:
 
 ```bash
 # Compile
-bin/tempo examples/advanced/<example>/main.tempo
+bin/tempo examples/advanced/<example>/main.ch
 
 # Run
 ./stage1
@@ -90,7 +89,5 @@ These applications achieve their performance through:
 
 ## Platform Support
 
-- **DOOM**: Runs on Linux, macOS, AtomicOS
-- **AtomicOrchestrator**: Requires AtomicOS for full features
 
 Both demonstrate how Chronos enables systems programming without sacrificing safety or predictability.

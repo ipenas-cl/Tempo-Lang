@@ -30,7 +30,6 @@
 
 ## Introduction
 
-ChronosCore is a deterministic processor architecture specifically designed for the Chronos programming language and AtomicOS. The primary design goal is to provide predictable, deterministic execution timing while maintaining reasonable performance for real-time and safety-critical applications.
 
 ### Key Features
 - **Deterministic Execution**: Every instruction has a fixed, known cycle count

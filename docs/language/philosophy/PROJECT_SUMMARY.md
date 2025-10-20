@@ -35,7 +35,7 @@ Chronos is a revolutionary deterministic programming language and operating syst
 - ✅ Concurrent programming with channels
 - ✅ Hardware synthesis capabilities
 
-#### 3. **Standard Library (prelude.tempo)**
+#### 3. **Standard Library (prelude.ch)**
 - ✅ 250+ built-in functions
 - ✅ I/O operations
 - ✅ Memory management
@@ -44,7 +44,6 @@ Chronos is a revolutionary deterministic programming language and operating syst
 - ✅ Data structures
 - ✅ Concurrency primitives
 
-#### 4. **AtomicOS Kernel**
 - ✅ Bootloader (x86_64, ARM64)
 - ✅ Memory management
 - ✅ Process scheduling
@@ -146,7 +145,6 @@ Optimization → Code Generation → Assembly → Executable
 1. **tempo-bible.md** - Complete language specification
 2. **README.md** - Project overview and getting started
 3. **course/** - 27 comprehensive compiler lessons
-4. **kernel/** - AtomicOS implementation
 5. **examples/** - Real-world code examples
 
 ## 🎓 Educational Value

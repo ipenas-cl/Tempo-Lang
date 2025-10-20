@@ -10,7 +10,7 @@ echo ""
 
 # Compile performance demo
 echo "1️⃣ Compiling performance demo..."
-./bin/tempo examples/performance-demo.tempo
+./bin/tempo examples/performance-demo.ch
 echo "✅ Compiled to tempo.app"
 echo ""
 
@@ -46,7 +46,7 @@ echo ""
 # Recompile with PGO optimizations
 echo "4️⃣ Recompiling with PGO optimizations..."
 echo "⚡ Applying ultra-high performance optimizations..."
-./bin/tempo examples/performance-demo.tempo
+./bin/tempo examples/performance-demo.ch
 echo "✅ Ultra-optimized binary generated"
 echo ""
 

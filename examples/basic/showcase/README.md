@@ -14,7 +14,7 @@ A Redis-compatible in-memory database that outperforms Redis through:
 
 ```bash
 # Run the example
-bin/tempo examples/showcase/benchmarks/redis-killer.tempo
+bin/tempo examples/showcase/benchmarks/redis-killer.ch
 ./stage1
 ```
 
@@ -28,7 +28,7 @@ Ultra-high-performance web server using kernel bypass:
 
 ```bash
 # Run the example (requires DPDK)
-bin/tempo examples/showcase/benchmarks/nginx-destroyer.tempo
+bin/tempo examples/showcase/benchmarks/nginx-destroyer.ch
 ./stage1
 ```
 
@@ -42,8 +42,8 @@ bin/tempo examples/showcase/benchmarks/nginx-destroyer.tempo
 ## Migration Guides
 
 If you're coming from:
-- **Redis**: See `redis-killer.tempo` for compatible API implementation
-- **Nginx**: See `nginx-destroyer.tempo` for configuration examples
+- **Redis**: See `redis-killer.ch` for compatible API implementation
+- **Nginx**: See `nginx-destroyer.ch` for configuration examples
 
 ## Technical Highlights
 

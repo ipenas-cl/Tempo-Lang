@@ -156,7 +156,7 @@ fn intern_type(cache: *TypeCache, type: *Type) -> *Type {
 ### Type Checker Base
 
 ```tempo
-// type_checker.tempo - Sistema de type checking
+// type_checker.ch - Sistema de type checking
 
 struct TypeChecker {
     cache: *TypeCache,

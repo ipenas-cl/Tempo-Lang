@@ -8,7 +8,6 @@ tempo-lang/
 │   ├── bootstrap/         # Bootstrap assembly code
 │   ├── stages/           # Multi-stage compilation
 │   └── platforms/        # Platform-specific code
-├── 📁 runtime/           # AtomicOS kernel and runtime
 │   ├── kernel/           # OS kernel implementation
 │   ├── drivers/          # Hardware drivers
 │   ├── fs/              # File system

@@ -24,7 +24,7 @@ echo "✅ Built tempo-compiler"
 
 # Test
 echo "🧪 Testing compiler..."
-./tempo-compiler hello.tempo
+./tempo-compiler hello.ch
 
 if [ -f stage1 ]; then
     echo "📦 Generated stage1"

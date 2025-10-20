@@ -26,7 +26,7 @@ Un compilador es un programa que traduce código fuente escrito en un lenguaje d
 ### El Pipeline de Compilación
 
 ```
-Código Fuente (.tempo)
+Código Fuente (.ch)
         ↓
     [LEXER]     → Convierte texto en tokens
         ↓
@@ -195,11 +195,11 @@ tempo-compiler/
 │   ├── bootstrap.s
 │   └── Makefile
 ├── stage1/          # Compilador en Chronos básico
-│   └── compiler.tempo
+│   └── compiler.ch
 ├── stage2/          # Compilador completo
-│   ├── lexer.tempo
-│   ├── parser.tempo
-│   └── codegen.tempo
+│   ├── lexer.ch
+│   ├── parser.ch
+│   └── codegen.ch
 ├── examples/        # Programas de ejemplo
 └── tests/          # Tests automáticos
 ```
@@ -209,15 +209,15 @@ tempo-compiler/
 Por ahora usaremos un script que simula Chronos:
 
 ```bash
-# Crear hello.tempo
-cat > hello.tempo << 'EOF'
+# Crear hello.ch
+cat > hello.ch << 'EOF'
 function main() {
     print("Hello, deterministic world!");
 }
 EOF
 
 # "Compilar" (por ahora es un script)
-./tempo-simulator hello.tempo hello
+./tempo-simulator hello.ch hello
 
 # Ejecutar
 ./hello

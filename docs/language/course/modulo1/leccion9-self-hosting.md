@@ -257,7 +257,7 @@ emit_return_value:
 ### Stage 1: Compilador en Chronos (Mínimo)
 
 ```tempo
-// stage1_compiler.tempo
+// stage1_compiler.ch
 // Compilador escrito en subset mínimo de Chronos
 // Compilado por stage0
 
@@ -386,7 +386,7 @@ fn generate_function(output, func) {
 ### Stage 2: Compilador Completo en Chronos
 
 ```tempo
-// stage2_compiler.tempo
+// stage2_compiler.ch
 // Compilador completo con todas las características
 // Este es el que se compilará a sí mismo
 
@@ -609,7 +609,7 @@ fn generate_code(c: *Compiler) {
 fn main() -> i32 {
     // Leer argumentos
     if argc < 2 {
-        print("Usage: tempo <input.tempo>\n");
+        print("Usage: tempo <input.ch>\n");
         return 1;
     }
     
@@ -656,25 +656,25 @@ ld -m elf_i386 stage0_compiler.o -o stage0_compiler
 
 # Paso 2: Compilar stage1 con stage0
 echo "[2/5] Compiling stage1 with stage0..."
-./stage0_compiler stage1_compiler.tempo stage1_compiler.s
+./stage0_compiler stage1_compiler.ch stage1_compiler.s
 nasm -f elf32 stage1_compiler.s -o stage1_compiler.o
 ld -m elf_i386 stage1_compiler.o -o stage1_compiler
 
 # Paso 3: Compilar stage2 con stage1
 echo "[3/5] Compiling stage2 with stage1..."
-./stage1_compiler stage2_compiler.tempo stage2_compiler.s
+./stage1_compiler stage2_compiler.ch stage2_compiler.s
 nasm -f elf32 stage2_compiler.s -o stage2_compiler.o
 ld -m elf_i386 stage2_compiler.o -o stage2_compiler
 
 # Paso 4: Auto-compilar stage2 (primera vez)
 echo "[4/5] Self-compiling stage2 (first time)..."
-./stage2_compiler stage2_compiler.tempo stage2_compiler_self1.s
+./stage2_compiler stage2_compiler.ch stage2_compiler_self1.s
 nasm -f elf32 stage2_compiler_self1.s -o stage2_compiler_self1.o
 ld -m elf_i386 stage2_compiler_self1.o -o stage2_compiler_self1
 
 # Paso 5: Auto-compilar stage2 (segunda vez)
 echo "[5/5] Self-compiling stage2 (second time)..."
-./stage2_compiler_self1 stage2_compiler.tempo stage2_compiler_self2.s
+./stage2_compiler_self1 stage2_compiler.ch stage2_compiler_self2.s
 nasm -f elf32 stage2_compiler_self2.s -o stage2_compiler_self2.o
 ld -m elf_i386 stage2_compiler_self2.o -o stage2_compiler_self2
 
@@ -693,7 +693,7 @@ fi
 ### Verificación y Testing del Compilador Self-Hosted
 
 ```tempo
-// test_self_hosting.tempo
+// test_self_hosting.ch
 // Tests para verificar que el compilador self-hosted funciona correctamente
 
 fn test_basic_arithmetic() -> bool {

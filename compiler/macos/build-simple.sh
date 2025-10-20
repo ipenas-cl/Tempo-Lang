@@ -15,9 +15,9 @@ chmod +x tempo-compiler
 echo "✅ Built tempo-compiler (100% Assembly, 0% C)"
 
 # Test with hello world if it exists
-if [ -f "../../examples/hello.tempo" ]; then
+if [ -f "../../examples/hello.ch" ]; then
     echo "🧪 Testing compiler..."
-    ./tempo-compiler ../../examples/hello.tempo
+    ./tempo-compiler ../../examples/hello.ch
     
     if [ -f stage1 ]; then
         echo "📦 Generated stage1 binary"
@@ -28,5 +28,5 @@ if [ -f "../../examples/hello.tempo" ]; then
         echo "❌ No stage1 generated"
     fi
 else
-    echo "⚠️  No test file found at ../../examples/hello.tempo"
+    echo "⚠️  No test file found at ../../examples/hello.ch"
 fi

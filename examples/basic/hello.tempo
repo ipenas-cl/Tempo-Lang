@@ -1,4 +1,0 @@
-fn main() -> i32 {
-    print_line("¡Hola desde Tempo!");
-    return 0;
-}

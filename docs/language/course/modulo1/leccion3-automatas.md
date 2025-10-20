@@ -505,7 +505,7 @@ function create_tempo_lexer() {
     };
     
     let lexer_code = generate_lexer(spec);
-    write_file("generated_lexer.tempo", lexer_code);
+    write_file("generated_lexer.ch", lexer_code);
 }
 ```
 
@@ -514,7 +514,7 @@ function create_tempo_lexer() {
 ```tempo
 // Benchmark de diferentes implementaciones
 function benchmark_lexers() {
-    let input = read_file("large_program.tempo");  // 100K líneas
+    let input = read_file("large_program.ch");  // 100K líneas
     
     // Método 1: Regex compiladas
     let t1 = measure_time(|| {
