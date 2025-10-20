@@ -22,16 +22,17 @@ This directory contains self-hosted Chronos compiler components - **Chronos code
 - ✅ Token sequence generation (15 tokens from real function)
 - ✅ Complete tokenization demonstration
 
-### Phase 3: 🔄 **IN PROGRESS** - Parser (30% complete)
-- ✅ AST node type definitions (10 types: NUM, IDENT, BINOP, CALL, etc.)
-- ✅ Binary operator type constants (ADD, SUB, MUL, DIV, etc.)
+### Phase 3: 🔄 **IN PROGRESS** - Parser (75% complete)
+- ✅ AST node type definitions (10 types: NUM, IDENT, BINOP, CALL, RETURN, LET, FUNC, BLOCK, IF, WHILE)
+- ✅ Binary operator type constants (ADD, SUB, MUL, DIV, EQEQ, LT, GT)
 - ✅ Parser strategy designed (recursive descent with precedence)
 - ✅ Token consumption functions (check_token, advance_token, peek_token)
 - ✅ Primary expression parsing (parse_number, parse_identifier, parse_primary)
-- ✅ Expression parsing demonstrations with precedence
-- 🔄 Binary operator precedence implementation (in progress)
-- ⏭️ Statement parsing implementation (let, return, if)
-- ⏭️ Function definition parsing
+- ✅ Binary operator precedence (parse_multiplicative, parse_additive, parse_comparison)
+- ✅ Statement parsing (parse_let, parse_return, parse_statement)
+- ✅ Function definition parsing (parse_function, parse_params, parse_block)
+- ✅ Program parsing (parse_program)
+- 🔄 Full integration and testing (in progress)
 
 ### Phase 4: ⏭️ **READY** - Codegen
 - Assembly emission
@@ -107,7 +108,7 @@ Features:
 
 **Status**: Token consumption complete (20% progress)
 
-### `parser_v03_primary.ch` - v0.3 (Current)
+### `parser_v03_primary.ch` - v0.3
 **Primary expression parsing**
 
 Features:
@@ -116,12 +117,65 @@ Features:
 - parse_identifier() - Creates AST_IDENT nodes
 - Expression parsing with precedence demonstrations
 
-**Demonstrates**:
-- Simple expressions: `42`, `variable`
-- Binary expressions: `x + y`
-- Complex expressions with precedence: `2 * 3 + 4` → `(2 * 3) + 4`
-
 **Status**: Primary parsing complete (30% progress)
+
+### `parser_v04_precedence.ch` - v0.4
+**Binary operator parsing with correct precedence**
+
+Features:
+- parse_multiplicative() - Handles `*` and `/` operators
+- parse_additive() - Handles `+` and `-` operators
+- parse_comparison() - Handles `==`, `<`, `>` operators
+- Precedence hierarchy demonstration
+
+**Demonstrates**:
+- Simple: `3 * 5` → `BINOP(MUL, 3, 5)`
+- Precedence: `2 * 3 + 4` → `BINOP(ADD, BINOP(MUL, 2, 3), 4)` ✅
+- Complex: `5 + 3 * 2 - 4` → Correct parse tree with precedence
+
+**Status**: Operator precedence complete (45% progress)
+
+### `parser_v05_statements.ch` - v0.5
+**Statement parsing (let, return)**
+
+Features:
+- parse_let() - Variable declarations: `let x = expr;`
+- parse_return() - Return statements: `return expr;`
+- parse_statement() - Statement dispatcher
+- Multiple statement sequences
+
+**Demonstrates**:
+- Simple: `let x = 42;`
+- Complex: `let result = 10 + 20;`
+- Return: `return x + y;`
+- Sequences: Multiple statements in order
+
+**Status**: Statement parsing complete (60% progress)
+
+### `parser_v06_functions.ch` - v0.6 (Current)
+**Function definition and program parsing**
+
+Features:
+- parse_function() - Complete function definitions
+- parse_params() - Parameter list parsing
+- parse_block() - Code block parsing with multiple statements
+- parse_program() - Top-level program structure
+
+**Demonstrates**:
+- Simple: `fn add(x, y) -> i32 { return x + y; }`
+- Complex body: Multiple statements in function
+- No params: `fn main() -> i32 { return 0; }`
+- Full programs: Multiple function definitions
+
+**Grammar Coverage**:
+- ✅ program → function*
+- ✅ function → 'fn' IDENT '(' params ')' '->' type block
+- ✅ params → IDENT (',' IDENT)*
+- ✅ block → '{' statement* '}'
+- ✅ statement → let_stmt | return_stmt | expr_stmt
+- ✅ expression → comparison → additive → multiplicative → primary
+
+**Status**: Parser design complete (75% progress)
 
 ---
 
@@ -144,11 +198,11 @@ Compile with Chronos v0.10:
 | Component | Status | Progress |
 |-----------|--------|----------|
 | **Lexer** | ✅ **COMPLETE** | **100%** |
-| **Parser** | 🔄 **IN PROGRESS** | **30%** |
+| **Parser** | 🔄 **IN PROGRESS** | **75%** |
 | **Codegen** | ⏭️ Ready to Start | 0% |
 | **Full Self-Hosting** | ⏭️ Integration Pending | 0% |
 
-**Overall**: ~43% complete (1 complete, 1 in progress)
+**Overall**: ~58% complete (Lexer done, Parser near complete)
 
 ---
 
@@ -170,23 +224,42 @@ Compile with Chronos v0.10:
 **Output**: Complete tokenization of Chronos functions (15 tokens)
 **Significance**: First complete compiler component written in Chronos
 
-### 🔄 Milestone 4: Parser v0.3 - Primary Expressions (IN PROGRESS)
+### 🔄 Milestone 4: Parser v0.6 - Full Parser Design (IN PROGRESS)
 **Date Started**: October 20, 2025
-**Files**: `parser_v01_basic.ch`, `parser_v02_tokens.ch`, `parser_v03_primary.ch`
-**Progress**: 30% complete
+**Date Updated**: October 20, 2025
+**Files**: `parser_v01_basic.ch` through `parser_v06_functions.ch`
+**Progress**: 75% complete
 
-**Completed**:
+**Completed (v0.1-v0.3)**:
 - ✅ AST node type system (10 types: NUM, IDENT, BINOP, CALL, RETURN, LET, FUNC, BLOCK, IF, WHILE)
-- ✅ Binary operator constants (ADD, SUB, MUL, DIV)
+- ✅ Binary operator constants (ADD, SUB, MUL, DIV, EQEQ, LT, GT)
 - ✅ Parser strategy design (recursive descent with precedence)
 - ✅ Token consumption functions (check_token, advance_token, peek_token)
 - ✅ Primary expression parsing (parse_number, parse_identifier, parse_primary)
-- ✅ Expression precedence demonstrations (2 * 3 + 4 → correct parsing)
+
+**Completed (v0.4)**:
+- ✅ parse_multiplicative() for `*` and `/` operators
+- ✅ parse_additive() for `+` and `-` operators
+- ✅ parse_comparison() for `==`, `<`, `>` operators
+- ✅ Correct operator precedence: `2 * 3 + 4` → `(2 * 3) + 4` ✅
+
+**Completed (v0.5)**:
+- ✅ parse_let() for variable declarations
+- ✅ parse_return() for return statements
+- ✅ parse_statement() dispatcher
+- ✅ Multiple statement sequences
+
+**Completed (v0.6)**:
+- ✅ parse_function() for function definitions
+- ✅ parse_params() for parameter lists
+- ✅ parse_block() for code blocks
+- ✅ parse_program() for full programs
+- ✅ Complete grammar coverage
 
 **Next Steps**:
-- Binary operator precedence implementation (parse_multiplicative, parse_additive)
-- Statement parsing (parse_let, parse_return)
-- Full parser integration
+- Full integration with real token streams
+- Testing with actual Chronos code
+- Edge case handling
 
 ### ⏭️ Milestone 5: Codegen Demo
 **Target**: 4-5 sessions
