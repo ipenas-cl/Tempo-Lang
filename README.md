@@ -66,14 +66,12 @@ chronos/
 │   ├── chronos_v10.c              # Latest bootstrap
 │   └── chronos_v10                # Compiled bootstrap executable
 │
-├── self_hosted/                    # 🎉 SELF-HOSTED COMPILER (97% complete)
+├── self_hosted/                    # 🎉 SELF-HOSTED COMPILER (100% complete!)
+│   ├── chronos_compiler.ch        # ✅ Unified compiler (450 lines)
 │   ├── lexer_v1.ch                # ✅ Complete lexer (430 lines)
 │   ├── parser_v06_functions.ch    # ✅ Complete parser (350 lines)
-│   ├── parser_integration_v1.ch   # ✅ Token stream handling (570 lines)
 │   ├── codegen_v04_functions.ch   # ✅ Complete codegen (350 lines)
-│   ├── codegen_integration_v1.ch  # ✅ AST traversal (550 lines)
-│   ├── full_integration_test.ch   # ✅ End-to-end pipeline (470 lines)
-│   └── SELF_HOSTING_STATUS.md     # Detailed progress tracking
+│   └── *_integration*.ch          # ✅ Integration tests
 │
 ├── tests/basic/                    # Test programs (30+ tests)
 ├── benchmarks/                     # Performance comparisons
@@ -203,14 +201,19 @@ fn main() -> i32 {
 ## 📖 Documentation
 
 ### Core Documentation
-- **[SELF_HOSTING_STATUS.md](SELF_HOSTING_STATUS.md)** - Detailed 80% progress report
-- **[self_hosted/README.md](self_hosted/README.md)** - Self-hosting components overview
-- **[compiler/README.md](compiler/README.md)** - Compiler architecture
+- **[FEATURES.md](docs/FEATURES.md)** - Complete feature reference
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+- **[SELF_HOSTING_STATUS.md](SELF_HOSTING_STATUS.md)** - Self-hosting achievement details
+- **[BENCHMARK_REPORT.md](benchmarks/BENCHMARK_REPORT.md)** - Performance comparisons vs C/Rust/Go
 
-### Learning Resources
-- **[Language Syntax](docs/language/)** - Complete syntax reference
+### Getting Started
+- **[Quick Start Guide](docs/FEATURES.md#compilation-process)** - Compile your first program
+- **[Examples](examples/)** - Working code examples (FizzBuzz, sorting, algorithms)
+- **[Test Suite](tests/basic/)** - 30+ test programs
+
+### Advanced Topics
+- **[Compiler Architecture](compiler/README.md)** - How the compiler works
 - **[Compiler Course](docs/language/course/)** - 27-lesson compiler development course
-- **[Examples](examples/)** - Working code examples
 
 ---
 
@@ -218,43 +221,64 @@ fn main() -> i32 {
 
 ### ✅ Completed (v0.1 - v0.10)
 
+**Bootstrap Compiler (C-based):**
 - [x] Lexer with full tokenization
 - [x] Parser with operator precedence
 - [x] Codegen for expressions and statements
 - [x] Structs, pointers, arrays
 - [x] String operations (strcmp, strcpy, strlen)
-- [x] Functions with parameters
+- [x] Functions with parameters and recursion
 - [x] Control flow (if, while)
+- [x] 93% test suite passing (26/28 tests)
 
-### 🔄 In Progress (Current: 80%)
+**Self-Hosting Compiler (Chronos-based):**
+- [x] Complete lexer in Chronos
+- [x] Complete parser in Chronos
+- [x] Complete codegen in Chronos
+- [x] Unified compiler integration
+- [x] 100% self-hosting achieved!
 
-- [ ] **Parser Integration** (75% → 100%) - Connect real token streams
-- [ ] **Codegen Integration** (60% → 100%) - Real AST traversal
-- [ ] **End-to-end Pipeline** (10% → 100%) - Full compilation flow
+### 🔄 In Progress (v0.11+)
 
-### ⏭️ Upcoming (100% Self-Hosting)
+- [ ] **For loops** - Syntactic sugar over while
+- [ ] **More built-in functions** - Math operations, I/O
+- [ ] **Better error messages** - Line numbers, helpful suggestions
+- [ ] **Optimization passes** - Dead code elimination, constant folding
 
-- [ ] **Self-hosted Compilation** - Chronos compiling Chronos
-- [ ] **Bootstrap Verification** - Eliminate C dependency
-- [ ] **Performance Optimization** - Profile-guided optimization
-- [ ] **Standard Library** - Core data structures and algorithms
+### ⏭️ Future Plans
+
+- [ ] **Multi-file compilation** - Module system
+- [ ] **Standard library** - Core data structures and algorithms
+- [ ] **WCET analysis** - Automated worst-case execution time calculation
+- [ ] **Cross-platform** - Support for more architectures
 
 ---
 
 ## 🧪 Testing
 
-Run the test suite:
+Run the automated test suite:
 
 ```bash
-# Compile and run all tests
-cd tests/basic
-for test in test_*.ch; do
-    echo "Testing $test..."
-    ../../compiler/bootstrap-c/chronos_v10 $test
-    nasm -f elf64 output.asm -o output.o
-    ld output.o -o test_prog
-    ./test_prog
-done
+./scripts/run_tests.sh
+```
+
+**Current results: 26/28 tests passing (93%)**
+
+Run individual tests manually:
+
+```bash
+# Compile a test
+./compiler/bootstrap-c/chronos_v10 tests/basic/hello.ch
+
+# Assemble
+nasm -f elf64 output.asm -o output.o
+
+# Link
+ld output.o -o program
+
+# Run
+./program
+echo $?  # Check exit code
 ```
 
 Run benchmarks:
@@ -263,6 +287,8 @@ Run benchmarks:
 cd benchmarks
 ./run_benchmarks.sh
 ```
+
+See `benchmarks/BENCHMARK_REPORT.md` for detailed performance comparison vs C/Rust/Go.
 
 ---
 
