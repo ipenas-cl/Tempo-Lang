@@ -2,7 +2,7 @@
  * Structs: struct Point { x: i32, y: i32 }
  * Struct literals: let p = Point { x: 10, y: 20 };
  * Field access: p.x, p.y
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

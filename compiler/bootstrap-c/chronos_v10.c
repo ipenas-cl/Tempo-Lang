@@ -1,7 +1,7 @@
 /* CHRONOS v0.10 - STRING OPERATIONS
  * String operations: strcmp, strcpy, strlen
  * Self-hosting ready: All critical features complete
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

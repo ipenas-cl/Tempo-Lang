@@ -369,7 +369,7 @@ app GrowingBusiness {
 
 ## 9. ROADMAP DE IMPLEMENTACIÓN {#roadmap}
 
-### Fase 0: Bootstrap (1 día con Claudes)
+### Fase 0: Bootstrap (1 día)
 - ✓ Compilador básico en assembly
 - ✓ Self-hosting en Chronos
 - ✓ Toolchain completa

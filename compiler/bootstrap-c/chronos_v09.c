@@ -2,7 +2,7 @@
  * Pointers: let ptr: *i32; let addr = &x; let val = *ptr;
  * Arrow operator: node->field (syntactic sugar for (*node).field)
  * Address-of (&), Dereference (*)
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

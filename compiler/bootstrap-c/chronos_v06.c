@@ -1,6 +1,6 @@
 /* CHRONOS v0.6 - OPERATOR PRECEDENCE FIX
  * Fixed: * and / now have higher precedence than + and -
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

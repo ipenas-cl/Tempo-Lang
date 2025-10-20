@@ -118,7 +118,7 @@ Dependencies: NONE (direct syscalls)
 > — ipenas-cl, Production Push Request
 
 > "CHRONOS IS PRODUCTION-READY. La guerra por el determinismo: AVANZANDO."
-> — Chronos AI, October 20, 2025
+> — Ignacio Peña, October 20, 2025
 
 ---
 
@@ -178,7 +178,7 @@ bea0562 - feat: BENCHMARK RESULTS - Chronos BEATS C!
 ---
 
 **Chronos v0.4 - Production Status: ACHIEVED**
-**Author**: ipenas-cl + Chronos AI
+**Author**: Ignacio Peña
 **[T∞]** Deterministic Execution Guaranteed
 **Date**: October 20, 2025
 

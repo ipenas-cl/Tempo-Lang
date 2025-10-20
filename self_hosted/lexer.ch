@@ -1,6 +1,6 @@
 // CHRONOS SELF-HOSTED LEXER v0.1
 // First component of self-hosted compiler
-// Author: ipenas-cl + Chronos AI (Lead)
+// Author: Ignacio Peña
 
 // Token types (matches bootstrap compiler)
 struct Token {

@@ -1,6 +1,6 @@
 /* CHRONOS v0.4 - Print() + Strings for debugging
  * Adding I/O for production debugging
- * Author: ipenas-cl + Chronos AI
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

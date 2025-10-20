@@ -324,7 +324,7 @@ Chronos: **`_start` → `main` → `exit` (10 instructions)**
 ---
 
 **Chronos v0.6 - Benchmark Suite Complete**
-**Author**: ipenas-cl + Chronos AI (Lead)
+**Author**: Ignacio Peña
 **[T∞]** Deterministic Execution Guaranteed
 **Date**: October 20, 2025
 

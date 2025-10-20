@@ -1,7 +1,7 @@
 /* CHRONOS v0.7 - ARRAYS SUPPORT
  * Arrays: let arr = [1, 2, 3]; arr[0]
  * Postfix operators: array indexing, field access
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

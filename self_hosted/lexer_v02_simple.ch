@@ -1,6 +1,6 @@
 // CHRONOS SELF-HOSTED LEXER v0.2
 // Tokenization demonstration
-// Author: ipenas-cl + Chronos AI (Lead)
+// Author: Ignacio Peña
 
 // Token types
 fn T_FN() -> i32 { return 4; }

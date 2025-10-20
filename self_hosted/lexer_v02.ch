@@ -1,6 +1,6 @@
 // CHRONOS SELF-HOSTED LEXER v0.2
 // Full tokenization of Chronos source code
-// Author: ipenas-cl + Chronos AI (Lead)
+// Author: Ignacio Peña
 
 // Token types (complete set)
 fn T_EOF() -> i32 { return 0; }

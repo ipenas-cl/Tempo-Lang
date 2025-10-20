@@ -1,6 +1,6 @@
 // CHRONOS SELF-HOSTED LEXER v1.0
 // Complete implementation with real source scanning
-// Author: ipenas-cl + Chronos AI (Lead)
+// Author: Ignacio Peña
 
 // ==================== TOKEN SYSTEM ====================
 

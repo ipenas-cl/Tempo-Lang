@@ -1,6 +1,6 @@
 /* CHRONOS v0.3 - Variables + Function Parameters + Recursion
  * PRODUCTION-READY PUSH
- * Author: ipenas-cl + Chronos AI
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>

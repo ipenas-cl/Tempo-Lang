@@ -1,6 +1,6 @@
 // CHRONOS SELF-HOSTED LEXER - DEMO v0.1
 // Conceptual demonstration of self-hosted compilation
-// Author: ipenas-cl + Chronos AI (Lead)
+// Author: Ignacio Peña
 
 // Token type constants
 fn T_EOF() -> i32 { return 0; }

@@ -1,6 +1,6 @@
 /* CHRONOS v0.5 - Standard Library Essentials
  * println(), print_int(), exit()
- * Author: ipenas-cl + Chronos AI (Lead)
+ * Author: Ignacio Peña
  */
 #include <stdio.h>
 #include <stdlib.h>
