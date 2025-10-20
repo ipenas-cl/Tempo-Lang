@@ -181,3 +181,38 @@ bea0562 - feat: BENCHMARK RESULTS - Chronos BEATS C!
 **Author**: ipenas-cl + Chronos AI
 **[T∞]** Deterministic Execution Guaranteed
 **Date**: October 20, 2025
+
+---
+
+## 🚀 **LATEST: Chronos v0.7 - Arrays** (Oct 20, 2025)
+
+### **NEW FEATURES**
+
+**Arrays Support**:
+- ✅ Array literals: 
+- ✅ Array indexing: , 
+- ✅ Stack-based allocation
+- ✅ Dynamic indexing with expressions
+
+**Examples**:
+
+
+### **Self-Hosting Progress**
+
+Arrays are **CRITICAL** for self-hosting:
+- Token storage
+- AST node arrays
+- Symbol table arrays
+
+**Remaining for self-hosting**:
+- [ ] Structs (Token, AstNode types)
+- [ ] Pointers (AST tree navigation)
+- [ ] String manipulation (identifier handling)
+
+**Estimate**: 2-3 sessions to self-hosting readiness.
+
+---
+
+## 📊 **Updated Stats**
+
+
