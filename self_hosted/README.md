@@ -259,6 +259,28 @@ Features:
 
 **Status**: Codegen design complete (60% progress)
 
+### `integration_demo.ch` - Integration (Current)
+**End-to-end compilation demonstration**
+
+Features:
+- Complete pipeline walkthrough: Source → Lexer → Parser → Codegen
+- Three example programs (simple, expressions, functions)
+- Data flow visualization
+- Integration architecture explanation
+
+**Demonstrates**:
+- Example 1: `fn main() -> i32 { return 42; }` - Complete flow
+- Example 2: Expression compilation with variables
+- Example 3: Multiple functions with function calls
+- Token stream → AST → Assembly transformation
+
+**Integration Points**:
+1. Lexer → Parser: Token array passing
+2. Parser → Codegen: AST traversal
+3. Codegen → Output: Assembly emission
+
+**Status**: Integration architecture defined (80% progress)
+
 ---
 
 ## Usage
@@ -282,9 +304,10 @@ Compile with Chronos v0.10:
 | **Lexer** | ✅ **COMPLETE** | **100%** |
 | **Parser** | ✅ **COMPLETE (design)** | **75%** |
 | **Codegen** | ✅ **COMPLETE (design)** | **60%** |
-| **Full Self-Hosting** | 🔄 Integration Pending | 0% |
+| **Integration** | 🔄 **IN PROGRESS** | **10%** |
+| **Full Self-Hosting** | ⏭️ Ready to Start | 0% |
 
-**Overall**: ~78% complete (All 3 components designed!)
+**Overall**: ~80% complete (Integration architecture defined!)
 
 ---
 
@@ -381,8 +404,30 @@ Compile with Chronos v0.10:
 - End-to-end compilation tests
 - Self-hosting implementation
 
-### ⏭️ Milestone 6: FULL SELF-HOSTING
-**Target**: 6-10 sessions
+### 🔄 Milestone 6: Integration (IN PROGRESS)
+**Date Started**: October 20, 2025
+**File**: `integration_demo.ch`
+**Progress**: 10% complete
+
+**Completed**:
+- ✅ Integration architecture designed
+- ✅ End-to-end pipeline documented
+- ✅ Three compilation examples demonstrated
+- ✅ Data flow visualization
+
+**Integration Points Defined**:
+1. Lexer → Parser: Token array passing
+2. Parser → Codegen: AST traversal
+3. Codegen → Output: Assembly emission
+
+**Next Steps**:
+- Implement token stream handling
+- Connect parser to real token input
+- Connect codegen to real AST input
+- End-to-end tests
+
+### ⏭️ Milestone 7: FULL SELF-HOSTING
+**Target**: 1-2 sessions
 **Goal**: `./chronos_self_hosted hello.ch` works with zero C code
 
 ---
